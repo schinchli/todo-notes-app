@@ -26,13 +26,18 @@ export const authApi = auth.createApi();
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 // dueDate is epoch ms; 0 = no due date (keeps it usable as a GSI sort key).
+const titleSchema = z.string().trim().min(1, 'Title is required').max(160, 'Title is too long');
+const bodySchema = z.string().max(4000, 'Note details are too long');
+const tagsSchema = z.array(z.string().trim().min(1).max(40)).max(12, 'A note can have at most 12 tags');
+const dueDateSchema = z.number().finite().nonnegative();
+
 const noteSchema = z.object({
   userId: z.string(),        // partition key — per-user isolation
   noteId: z.string(),        // sort key — unique within a user
-  title: z.string(),
-  body: z.string(),
-  tags: z.array(z.string()),
-  dueDate: z.number(),
+  title: titleSchema,
+  body: bodySchema,
+  tags: tagsSchema,
+  dueDate: dueDateSchema,
   completed: z.boolean(),
   version: z.number(),       // optimistic locking
   createdAt: z.number(),
@@ -52,7 +57,7 @@ const notes = new DistributedTable(scope, 'notes', {
 // Per-user settings for the daily email digest.
 const profileSchema = z.object({
   userId: z.string(),
-  email: z.string(),
+  email: z.string().trim().email('Enter a valid email address'),
   digestEnabled: z.boolean(),
 });
 
@@ -89,14 +94,20 @@ async function publishNote(userId: string, action: 'created' | 'updated' | 'dele
 async function createNoteFor(userId: string, input: {
   title: string; body?: string; tags?: string[]; dueDate?: number;
 }): Promise<Note> {
+  const validated = z.object({
+    title: titleSchema,
+    body: bodySchema.default(''),
+    tags: tagsSchema.default([]),
+    dueDate: dueDateSchema.default(0),
+  }).parse(input);
   const now = Date.now();
   const note: Note = {
     userId,
     noteId: newId(),
-    title: input.title,
-    body: input.body ?? '',
-    tags: input.tags ?? [],
-    dueDate: input.dueDate ?? 0,
+    title: validated.title,
+    body: validated.body,
+    tags: [...new Set(validated.tags)],
+    dueDate: validated.dueDate,
     completed: false,
     version: 1,
     createdAt: now,
@@ -230,6 +241,14 @@ const mailer = new EmailClient(scope, 'digest-mailer', {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+async function requireOwnedConversation(userId: string, conversationId: string) {
+  const owned = await assistant.listConversations(userId);
+  if (!owned.some(conversation => conversation.conversationId === conversationId)) {
+    // Keep this deliberately vague so callers cannot probe conversation IDs.
+    throw new Error('Not found');
+  }
+}
+
 new CronJob(scope, 'daily-digest', {
   schedule: 'cron(0 8 * * ? *)',
   timezone: 'Asia/Kolkata',
@@ -291,9 +310,16 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     const user = await auth.requireAuth(context);
     const note = await notes.get({ userId: user.username, noteId });
     if (!note) throw new Error('Note not found');
+    const validatedPatch = z.object({
+      title: titleSchema.optional(),
+      body: bodySchema.optional(),
+      tags: tagsSchema.optional(),
+      dueDate: dueDateSchema.optional(),
+    }).parse(patch);
     const updated = {
       ...note,
-      ...patch,
+      ...validatedPatch,
+      ...(validatedPatch.tags ? { tags: [...new Set(validatedPatch.tags)] } : {}),
       version: note.version + 1,
       updatedAt: Date.now(),
     };
@@ -331,7 +357,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async updateSettings(email: string, digestEnabled: boolean) {
     const user = await auth.requireAuth(context);
-    const profile = { userId: user.username, email, digestEnabled };
+    const profile = profileSchema.parse({ userId: user.username, email, digestEnabled });
     await profiles.put(profile);
     return profile;
   },
@@ -351,7 +377,9 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async sendMessage(conversationId: string, message: string, channelId: string) {
     const user = await auth.requireAuth(context);
-    await assistant.stream(message, {
+    await requireOwnedConversation(user.username, conversationId);
+    const validatedMessage = z.string().trim().min(1, 'Message is required').max(8000, 'Message is too long').parse(message);
+    await assistant.stream(validatedMessage, {
       conversationId,
       channelId,
       userId: user.username,
@@ -363,8 +391,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
   async getConversation(conversationId: string) {
     const user = await auth.requireAuth(context);
     // Agent read paths are not owner-scoped — authorize here.
-    const owned = await assistant.listConversations(user.username);
-    if (!owned.some(c => c.conversationId === conversationId)) throw new Error('Not found');
+    await requireOwnedConversation(user.username, conversationId);
     return { messages: await assistant.getConversation(conversationId) };
   },
 
@@ -375,6 +402,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async resumeAgent(channelId: string, responses: { interruptId: string; approved: boolean }[], conversationId: string) {
     const user = await auth.requireAuth(context);
+    await requireOwnedConversation(user.username, conversationId);
     await assistant.resume(channelId, responses, {
       conversationId,
       userId: user.username,

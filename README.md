@@ -22,8 +22,9 @@ with zero code changes.
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm run test:e2e   # 15 e2e tests against the same typed client the UI uses
+npm run test:e2e   # e2e tests against the same typed client the UI uses
 npm run typecheck  # TypeScript type checking
+npm run check      # typecheck + production build + full e2e suite
 ```
 
 Optional: run `ollama serve` + `ollama pull llama3.1:8b` for real local LLM
@@ -96,6 +97,28 @@ Before production use:
 | `knowledge/` | Help docs ingested by the KnowledgeBase |
 | `test/e2e.test.ts` | E2E suite: auth, CRUD, settings, KB, agent |
 | `index.html` | HTML shell |
+
+## Frontend experience
+
+The responsive Daymark workspace includes quick capture, local search and
+status filters, due-date context, digest settings, and an approval-aware
+assistant panel. Draft inputs survive realtime and assistant redraws, and the
+interface includes explicit loading, empty, error, and success states.
+
+Keyboard focus, semantic labels, reduced-motion preferences, and mobile layouts
+are supported. Destructive deletes require confirmation; agent tools that write
+data continue to use the Blocks approval flow.
+
+## Production checklist
+
+- Replace `AuthBasic` with `AuthCognito` or `AuthOIDC` if the app needs MFA,
+  social sign-in, federation, or enterprise identity controls.
+- Configure and verify the SES sender currently represented by
+  `noreply@example.com`, then request SES production access.
+- Enable the selected Bedrock model and confirm regional availability and
+  quotas in the deployment account.
+- Run `npm run check`, deploy to a sandbox, and smoke-test auth, agent approval,
+  realtime updates, and digest delivery before promoting to production.
 
 ## Stack naming
 

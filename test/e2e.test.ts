@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
+import { readFileSync } from 'node:fs';
 import { installCookieJar, isServerRunning } from '@aws-blocks/blocks/utils';
 import type { api as ApiType, authApi as AuthApiType } from 'aws-blocks';
 
@@ -19,6 +20,14 @@ installCookieJar();
 const USER = `testuser-${Date.now()}@example.com`;
 const INTRUDER = `intruder-${Date.now()}@example.com`;
 const PASSWORD = 'TestPass123!';
+const isLocalStack = (() => {
+  try {
+    const config = JSON.parse(readFileSync(new URL('../.blocks-sandbox/config.json', import.meta.url), 'utf8'));
+    return config.environment === 'localstack';
+  } catch {
+    return false;
+  }
+})();
 
 let server: ChildProcess | null = null;
 let api: typeof ApiType;
@@ -105,6 +114,12 @@ test('notes: create with body, tags, and due date', async () => {
   assert.ok(note.noteId);
 });
 
+test('notes: rejects invalid content at the API boundary', async () => {
+  await assert.rejects(() => api.createNote('   '));
+  await assert.rejects(() => api.createNote('Valid title', '', ['x'.repeat(41)]));
+  await assert.rejects(() => api.createNote('Valid title', '', [], -1));
+});
+
 test('notes: list (only own)', async () => {
   const list = await api.listNotes();
   assert.ok(list.length >= 1);
@@ -188,10 +203,18 @@ test('settings: update and persist', async () => {
   assert.strictEqual(roundTrip.digestEnabled, true);
 });
 
+test('settings: rejects an invalid digest email', async () => {
+  await assert.rejects(() => api.updateSettings('not-an-email', true));
+});
+
 // ─── Knowledge base (local: TF-IDF over ./knowledge) ─────────────────────────
 
 test('help: knowledge base returns relevant chunks', async () => {
   const results = await api.searchHelp('how does the email digest work');
+  if (isLocalStack) {
+    assert.deepStrictEqual(results, [], 'KnowledgeBase should degrade gracefully when Bedrock is unavailable');
+    return;
+  }
   assert.ok(results.length >= 1, 'Expected at least one help result');
   assert.ok(results.some(r => r.text.toLowerCase().includes('digest')));
   assert.ok(results[0].score > 0);
@@ -229,6 +252,7 @@ test('assistant: conversations are owner-scoped', async () => {
   });
 
   await assert.rejects(() => api.getConversation(conversationId));
+  await assert.rejects(() => api.sendMessage(conversationId, 'Try to hijack this conversation', crypto.randomUUID()));
 
   // Restore primary test user
   await authApi.setAuthState({ action: 'signOut' });
