@@ -125,6 +125,9 @@ PYEOF
         JSON.stringify({ apiUrl, environment: "localstack" }, null, 2));
       console.log("API URL (LocalStack):", apiUrl);
     '
+    echo "NOTE: .blocks-sandbox/config.json now points the frontend AND npm run"
+    echo "test:e2e at LocalStack. To go back to the local dev server, restore:"
+    echo '  {"apiUrl": "http://localhost:3000/aws-blocks/api", "environment": "local"}'
     ;;
 
   status)
