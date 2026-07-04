@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Todo Notes</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1100px; margin: 40px auto; padding: 20px; color: #333; }
+    h1 { margin-bottom: 4px; }
+    .intro { color: #666; font-size: 0.9em; margin-bottom: 24px; line-height: 1.5; }
+    .intro strong { color: #444; }
+    input, textarea, select { padding: 8px; margin: 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.95em; font-family: inherit; }
+    input[type="text"], input[type="email"], input[type="password"] { min-width: 220px; }
+    button { padding: 8px 16px; margin: 4px; cursor: pointer; border: 1px solid #ddd; border-radius: 4px; background: #f8f8f8; font-size: 0.95em; }
+    button:hover { background: #eee; }
+    ul { padding: 0; }
+    li { list-style: none; }
+    .tag { background: #ede7f6; color: #5e35b1; border-radius: 10px; padding: 1px 8px; font-size: 0.75em; margin-right: 4px; }
+    .due { font-size: 0.8em; color: #888; }
+    .due.overdue { color: #c62828; font-weight: bold; }
+    .chat-log { border: 1px solid #eee; border-radius: 6px; padding: 10px; height: 260px; overflow-y: auto; background: #fafafa; font-size: 0.9em; }
+    .chat-msg-user { text-align: right; margin: 6px 0; }
+    .chat-msg-user span { background: #e3f2fd; border-radius: 10px; padding: 4px 10px; display: inline-block; }
+    .chat-msg-assistant { text-align: left; margin: 6px 0; }
+    .chat-msg-assistant span { background: #f1f8e9; border-radius: 10px; padding: 4px 10px; display: inline-block; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="menu-bar"></div>
+  <h1>Todo Notes</h1>
+  <p class="intro">
+    Notes with <strong>tags and due dates</strong>, an <strong>AI assistant</strong>
+    (Agent + KnowledgeBase blocks), a <strong>daily email digest</strong>
+    (CronJob + EmailClient blocks), and <strong>real-time sync</strong> — built on AWS Blocks,
+    running fully local until you deploy.
+  </p>
+  <p id='signInMessage'>Sign in to get started.</p>
+  <div id="auth"></div>
+  <div id="app"></div>
+  <script type="module" src="/src/index.ts"></script>
+</body>
+</html>
