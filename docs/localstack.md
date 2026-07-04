@@ -37,11 +37,15 @@ The harness and `aws-blocks/index.cdk.ts` apply only to LocalStack deployments:
 ## Expected differences
 
 - `searchHelp` returns an empty array because Bedrock Knowledge Bases are unavailable.
+- Digest sending returns `EmailSendFailedException` because the pinned community
+  image does not emulate the SES v2 API used by `EmailClient`; local development
+  captures the email and AWS sends it through SES normally.
 - The Agent uses the canned provider through the deployed SQS-to-Lambda path.
 - The frontend remains locally served.
 - Realtime updates may be unavailable.
 
-The E2E suite detects the LocalStack environment and asserts the documented knowledge-base fallback while testing all other supported paths normally.
+The E2E suite detects the LocalStack environment and asserts both documented
+emulator gaps while testing all other supported paths normally.
 
 ## Returning to local development
 

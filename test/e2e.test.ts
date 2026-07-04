@@ -9,6 +9,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { installCookieJar, isServerRunning } from '@aws-blocks/blocks/utils';
+import { __resetConnectionsForTest } from '@aws-blocks/bb-realtime/mock-middleware';
 import type { api as ApiType, authApi as AuthApiType } from 'aws-blocks';
 
 // Install cookie jar before importing the API client — Node's fetch doesn't
@@ -63,6 +64,7 @@ test.before(async () => {
 });
 
 test.after(() => {
+  __resetConnectionsForTest();
   if (server?.pid) {
     try { process.kill(-server.pid, 'SIGTERM'); } catch {}
   }
@@ -112,6 +114,24 @@ test('notes: create with body, tags, and due date', async () => {
   assert.strictEqual(note.completed, false);
   assert.strictEqual(note.version, 1);
   assert.ok(note.noteId);
+});
+
+test('realtime: publishes note changes after subscription is established', async () => {
+  if (isLocalStack) return; // Community LocalStack does not emulate the WebSocket API.
+  const channel = await api.subscribeNotes();
+  let received: { action: string; noteId: string } | undefined;
+  const subscription = channel.subscribe(event => { received = event; });
+  await subscription.established;
+  try {
+    const note = await api.createNote('Realtime delivery test');
+    for (let attempt = 0; attempt < 20 && received?.noteId !== note.noteId; attempt++) {
+      await setTimeout(50);
+    }
+    assert.deepStrictEqual(received, { action: 'created', noteId: note.noteId });
+    await api.deleteNote(note.noteId);
+  } finally {
+    subscription.unsubscribe();
+  }
 });
 
 test('notes: rejects invalid content at the API boundary', async () => {
@@ -207,6 +227,21 @@ test('settings: rejects an invalid digest email', async () => {
   await assert.rejects(() => api.updateSettings('not-an-email', true));
 });
 
+test('digest: sends due notes through EmailClient', async () => {
+  if (isLocalStack) {
+    await assert.rejects(
+      () => api.sendDigestNow(),
+      (error: any) => error.name === 'EmailSendFailedException' && /sesv2/i.test(error.message),
+      'Community LocalStack should expose its documented SES v2 emulation gap',
+    );
+    return;
+  }
+  const result = await api.sendDigestNow();
+  assert.strictEqual(result.sent, true);
+  assert.ok(result.count >= 1);
+  if (result.sent) assert.ok(result.messageId);
+});
+
 // ─── Knowledge base (local: TF-IDF over ./knowledge) ─────────────────────────
 
 test('help: knowledge base returns relevant chunks', async () => {
@@ -220,7 +255,15 @@ test('help: knowledge base returns relevant chunks', async () => {
   assert.ok(results[0].score > 0);
 });
 
-// ─── AI assistant (local: canned provider) ────────────────────────────────────
+// ─── AI assistant (local: built-in offline provider or opt-in Ollama) ───────
+
+test('assistant: reports its active runtime', async () => {
+  const status = await api.getAssistantStatus();
+  assert.ok(['offline', 'localstack', 'aws'].includes(status.mode));
+  assert.ok(['ollama', 'canned', 'bedrock'].includes(status.provider));
+  if (status.provider !== 'ollama') assert.strictEqual(status.ready, true);
+  assert.ok(status.model);
+});
 
 test('assistant: conversation round-trip persists messages', async () => {
   const { conversationId } = await api.createConversation();
@@ -237,7 +280,32 @@ test('assistant: conversation round-trip persists messages', async () => {
     await setTimeout(1000);
   }
   assert.ok(messages.some(m => m.role === 'user'), 'user message persisted');
-  assert.ok(messages.some(m => m.role === 'assistant'), 'assistant replied (canned provider locally)');
+  assert.ok(messages.some(m => m.role === 'assistant'), 'assistant replied');
+});
+
+test('assistant: a mutating tool pauses for approval and denial preserves notes', async () => {
+  if (isLocalStack) return; // Agent streaming WebSockets are not emulated reliably.
+  const before = await api.listNotes();
+  const { conversationId } = await api.createConversation();
+  const channelId = crypto.randomUUID();
+  const channel = await api.getAgentChannel(channelId);
+  let interrupts: Array<{ id: string; reason?: { tool?: string } }> = [];
+  const subscription = channel.subscribe(event => {
+    if (event.type === 'interrupt') interrupts = event.interrupts ?? [];
+  });
+  await subscription.established;
+  try {
+    await api.sendMessage(conversationId, 'Please use addNote for this idea', channelId);
+    for (let attempt = 0; attempt < 40 && interrupts.length === 0; attempt++) await setTimeout(50);
+    assert.strictEqual(interrupts[0]?.reason?.tool, 'addNote');
+    await api.resumeAgent(channelId, [{ interruptId: interrupts[0].id, approved: false }], conversationId);
+
+    const { messages } = await api.getConversation(conversationId);
+    assert.ok(messages.some(message => message.role === 'approval' && message.content === 'no'));
+    assert.strictEqual((await api.listNotes()).length, before.length, 'denied tool must not create a note');
+  } finally {
+    subscription.unsubscribe();
+  }
 });
 
 test('assistant: conversations are owner-scoped', async () => {

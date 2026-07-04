@@ -33,7 +33,7 @@ The development server runs the AWS Blocks local implementations and Vite at `ht
 
 ## Tests
 
-`test/domain.test.ts` covers pure filtering, summaries, and date presentation. `test/e2e.test.ts` uses the same generated client as the UI and covers auth, user isolation, CRUD, indexes, locking, settings, help retrieval, agent persistence, and conversation authorization.
+`test/domain.test.ts` covers pure filtering, summaries, and date presentation. `test/e2e.test.ts` uses the same generated client as the UI and covers auth, user isolation, CRUD, indexes, locking, realtime delivery, settings, digest email, help retrieval, agent runtime status, persistence, and conversation authorization.
 
 ```bash
 npm run test:unit
@@ -42,6 +42,10 @@ npm run check
 ```
 
 The E2E test starts a local server when one is not already running. When `.blocks-sandbox/config.json` targets LocalStack, the same suite runs against API Gateway and Lambda.
+
+Browser verification covers the signed-in desktop workspace, the assistant
+round trip, console errors, and the 390 px responsive breakpoint. CDK synthesis
+and LocalStack deployment are the infrastructure-level release checks.
 
 ## Generated files
 

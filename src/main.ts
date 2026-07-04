@@ -13,6 +13,7 @@ import './styles/app.css';
 
 type ChatMessage = { role: string; content: string };
 type Interrupt = { id: string; name: string; reason?: { tool?: string; input?: unknown } };
+type AssistantStatus = Awaited<ReturnType<typeof api.getAssistantStatus>>;
 
 const menuBarEl = document.getElementById('menu-bar')!;
 menuBarEl.appendChild(AccountMenuBar(authApi));
@@ -34,8 +35,10 @@ document.getElementById('app')!.appendChild(
     let searchQuery = '';
     let settings = { email: '', digestEnabled: false };
     let showSettings = false;
+    let digestSending = false;
     let chatMessages: ChatMessage[] = [];
     let chatLoading = false;
+    let assistantStatus: AssistantStatus | null = null;
     let pendingInterrupts: Interrupt[] = [];
     let errorMessage = '';
     let toastMessage = '';
@@ -89,6 +92,13 @@ document.getElementById('app')!.appendChild(
       await runAction(async () => {
         notes = await api.listNotes(sortBy);
         notesLoading = false;
+        redraw();
+      });
+    }
+
+    async function loadAssistantStatus() {
+      await runAction(async () => {
+        assistantStatus = await api.getAssistantStatus();
         redraw();
       });
     }
@@ -184,6 +194,8 @@ document.getElementById('app')!.appendChild(
                     <span>Send my digest</span>
                   </label>
                   <button class="button button-primary" type="submit">Save settings</button>
+                  <button class="button button-quiet" type="button" ?disabled=${digestSending}
+                    @click=${sendDigestNow}>${digestSending ? 'Sending…' : 'Send test digest'}</button>
                 </form>
               ` : ''}
 
@@ -236,6 +248,16 @@ document.getElementById('app')!.appendChild(
                 <span class="eyebrow">Built-in helper</span>
                 <h2 id="assistant-title">Notes assistant</h2>
               </div>
+            </div>
+            <div class=${`assistant-status status-${assistantStatus?.ready === false ? 'unavailable' : assistantStatus?.provider ?? 'checking'}`} role="status">
+              <i aria-hidden="true"></i>
+              <span>${assistantStatus
+                ? assistantStatus.provider === 'ollama'
+                  ? `Offline · ${assistantStatus.model}${assistantStatus.ready ? '' : ' · unavailable'}`
+                  : assistantStatus.provider === 'bedrock'
+                    ? 'AWS Bedrock · connected'
+                    : 'Offline · built-in assistant'
+                : 'Checking assistant…'}</span>
             </div>
             <p class="assistant-intro">Ask about your list, find help, or prepare a note. You approve every change before it happens.</p>
 
@@ -371,6 +393,21 @@ document.getElementById('app')!.appendChild(
       });
     }
 
+    async function sendDigestNow() {
+      digestSending = true;
+      redraw();
+      await runAction(async () => {
+        const result = await api.sendDigestNow();
+        showToast(result.sent
+          ? `Digest sent with ${result.count} note${result.count === 1 ? '' : 's'}`
+          : result.reason === 'disabled'
+            ? 'Enable and save the digest first'
+            : 'No notes are due in the next 24 hours');
+      });
+      digestSending = false;
+      redraw();
+    }
+
     async function sendChat(suggestedMessage?: string) {
       const input = container.querySelector('#chat-input') as HTMLTextAreaElement | null;
       const message = (suggestedMessage ?? input?.value ?? '').trim();
@@ -399,6 +436,7 @@ document.getElementById('app')!.appendChild(
     })();
 
     load(true);
+    loadAssistantStatus();
     return container;
   }),
 );

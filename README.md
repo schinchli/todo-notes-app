@@ -1,6 +1,8 @@
-# Daymark
+# Instanote
 
-Daymark is a local-first todo notes application built with AWS Blocks. It combines structured notes, tags, due dates, realtime updates, a daily email digest, searchable help, and an approval-aware AI assistant in one responsive workspace.
+**Catch ideas instantly. Find them anywhere.**
+
+Instanote is a local-first notes application built with AWS Blocks. It combines structured notes, tags, due dates, realtime updates, a daily email digest, searchable help, and an approval-aware AI assistant in one responsive workspace.
 
 The same typed application code runs against local mocks, a LocalStack deployment, or managed AWS services. Local development does not require an AWS account.
 
@@ -14,6 +16,7 @@ The same typed application code runs against local mocks, a LocalStack deploymen
 - Require explicit approval before the assistant creates or completes a note.
 - Search bundled help content through a knowledge base.
 - Send an optional 8:00 AM Asia/Kolkata digest of due and overdue notes.
+- Send an on-demand test digest from settings before enabling the daily schedule.
 - Run locally, deploy to LocalStack, or deploy to AWS without changing application logic.
 
 ## Technology
@@ -38,7 +41,7 @@ The same typed application code runs against local mocks, a LocalStack deploymen
 - npm
 - Docker for LocalStack testing
 - AWS credentials only for sandbox or production AWS deployments
-- Optional: Ollama with `llama3.1:8b` for local model responses
+- Optional: Ollama and a tool-capable local model for richer offline responses
 
 ## Quick start
 
@@ -51,7 +54,21 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Local state is stored under `.bb-data/` and is intentionally excluded from Git. Without Ollama, the assistant automatically uses the deterministic canned provider.
+Local state is stored under `.bb-data/` and is intentionally excluded from Git. The assistant status badge shows its active runtime. The built-in deterministic provider works immediately, stays offline, and keeps agent tools and approvals testable without an external model.
+
+### Offline Notes assistant
+
+For richer local responses, install and start Ollama, pull a tool-capable model, and opt in when starting Instanote:
+
+```bash
+ollama serve
+ollama pull qwen3:0.6b
+INSTANOTE_OLLAMA_MODEL=qwen3:0.6b npm run dev
+```
+
+The assistant panel should display `Offline · qwen3:0.6b`. It can chat, search notes, list due items, and propose note changes without AWS credentials or internet access. Creating or completing notes still requires your approval. Model capability varies; keep the built-in default for deterministic development and CI.
+
+Amazon Bedrock AgentCore's local development server reproduces the AgentCore runtime contract, but model inference is only offline when it is paired with a local provider such as Ollama. Instanote uses AWS Blocks' Strands-based Agent locally and Amazon Bedrock when deployed. See [assistant runtimes](docs/assistant.md).
 
 ## Validation
 
@@ -61,7 +78,7 @@ Run the complete local quality gate:
 npm run check
 ```
 
-This command runs TypeScript checking, domain unit tests, a production frontend build, and the full typed end-to-end suite.
+This command runs TypeScript checking, domain unit tests, a production frontend build, and the full typed end-to-end suite, including realtime delivery, digest email, knowledge retrieval, and assistant conversations.
 
 Useful individual commands:
 
@@ -96,7 +113,7 @@ The deploy command temporarily points `.blocks-sandbox/config.json` at the Local
 }
 ```
 
-Community LocalStack does not emulate Bedrock Knowledge Bases, CloudFront hosting, or API Gateway WebSockets completely. The app intentionally degrades help search to an empty result and treats realtime publishing as best-effort in this environment. See [LocalStack details](docs/localstack.md).
+Community LocalStack does not emulate Bedrock Knowledge Bases, SES v2, CloudFront hosting, or API Gateway WebSockets completely. The app intentionally degrades help search to an empty result, exposes the digest send error, and treats realtime publishing as best-effort in this environment. See [LocalStack details](docs/localstack.md).
 
 ## AWS deployment
 
@@ -136,6 +153,7 @@ See the full [deployment guide](docs/deployment.md).
 │   └── scripts/              # AWS Blocks lifecycle entry points
 ├── docs/
 │   ├── architecture.md       # Components, boundaries, data, and request flows
+│   ├── assistant.md          # Offline, LocalStack, Bedrock, and AgentCore runtimes
 │   ├── deployment.md         # AWS sandbox and production operations
 │   ├── development.md        # Local workflow, conventions, and quality gates
 │   └── localstack.md         # LocalStack workflow and parity notes
@@ -168,6 +186,7 @@ For diagrams and detailed execution flows, read [architecture.md](docs/architect
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Assistant runtimes and offline setup](docs/assistant.md)
 - [Development workflow](docs/development.md)
 - [Deployment and production checklist](docs/deployment.md)
 - [LocalStack workflow and limitations](docs/localstack.md)
@@ -178,7 +197,7 @@ For diagrams and detailed execution flows, read [architecture.md](docs/architect
 
 - Port 3000 is already in use: run `npm run cleanup`, then restart development.
 - Tests target the wrong backend: inspect `.blocks-sandbox/config.json` and restore the local URL shown above.
-- Local assistant responses are generic: start Ollama and pull `llama3.1:8b`; otherwise canned responses are expected.
+- Local assistant responses are intentionally concise by default: configure `INSTANOTE_OLLAMA_MODEL` for richer responses from a tool-capable Ollama model.
 - LocalStack help search returns no results: Bedrock Knowledge Bases are not emulated; this is expected.
 - Production email fails: verify the configured SES identity and confirm the account is out of the SES sandbox.
 - Production help search is initially empty: knowledge base ingestion is asynchronous; wait for synchronization before testing retrieval.

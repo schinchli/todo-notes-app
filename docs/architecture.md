@@ -2,7 +2,7 @@
 
 ## System overview
 
-Daymark is a single AWS Blocks application. The browser imports a generated typed client, while the backend composes infrastructure-aware blocks inside one scope.
+Instanote is a single AWS Blocks application. The browser imports a generated typed client, while the backend composes infrastructure-aware blocks inside one scope.
 
 ```text
 Browser UI
@@ -20,6 +20,24 @@ ApiNamespace ── AuthBasic
 ```
 
 Local development substitutes persistent local mocks. LocalStack and AWS use synthesized CDK resources.
+
+## AWS Blocks coverage
+
+| Block | Product responsibility | Local verification | AWS resource path |
+|---|---|---|---|
+| `ApiNamespace` | Typed authenticated application API | Full E2E suite | API Gateway + Lambda |
+| `AuthBasic` | Account sessions and ownership boundary | Sign-up, sign-in, sign-out, rejection tests | DynamoDB/SSM-backed auth runtime |
+| `DistributedTable` | Notes, profiles, indexes, optimistic locking | CRUD, sort, isolation, conflict tests | DynamoDB tables and GSIs |
+| `Realtime` | Cross-client note and agent events | WebSocket delivery test | API Gateway WebSocket |
+| `Agent` | Notes assistant, tools, approvals, persistence | Runtime status and conversation round trip | SQS + Lambda + Bedrock |
+| `KnowledgeBase` | Searchable help content | TF-IDF retrieval test | Bedrock Knowledge Bases |
+| `CronJob` | Daily digest schedule | Shared digest builder exercised on demand | EventBridge Scheduler |
+| `EmailClient` | Digest delivery | Captured local email and test-send API | Amazon SES |
+
+`npm run check` validates application behavior, `npx cdk synth --quiet`
+validates construct composition, and the LocalStack workflow validates the
+supported deployed service path. Known emulation gaps are isolated and listed
+in `docs/localstack.md`.
 
 ## Main boundaries
 
@@ -85,12 +103,17 @@ The Agent block manages conversation and message persistence. The API checks the
 3. It queries each user's open notes due within 24 hours, including overdue items.
 4. EmailClient batches messages through SES.
 
+The same digest builder is exposed through the authenticated `sendDigestNow`
+API so users can verify delivery. It only sends to the signed-in user's saved
+profile address.
+
 ## Security decisions
 
 - Every application API method requires authentication.
 - User identity always comes from the server-side session, never a browser argument.
 - User data is partitioned by authenticated username.
 - Conversation ownership is checked before message read, send, and resume.
+- The assistant runtime reports whether it selected Ollama, the offline fallback, LocalStack, or Bedrock.
 - Mutating assistant tools require approval.
 - API inputs have runtime validation and size limits.
 - Errors for unauthorized conversation IDs use a non-enumerating `Not found` response.

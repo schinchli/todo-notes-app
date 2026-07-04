@@ -1,7 +1,7 @@
 /**
  * Backend — aws-blocks/index.ts
  *
- * Todo-notes app: per-user notes with tags + due dates, an AI assistant
+ * Instanote: per-user notes with tags + due dates, an AI assistant
  * (Agent + KnowledgeBase), and a daily email digest (CronJob + EmailClient).
  *
  * Everything runs locally with automatic mocks (canned LLM, TF-IDF search,
@@ -9,12 +9,13 @@
  * DynamoDB, Bedrock, Bedrock Knowledge Bases, EventBridge Scheduler, SES.
  */
 import { ApiNamespace, Scope, AuthBasic, DistributedTable, Realtime } from '@aws-blocks/blocks';
-import { Agent, BedrockModels, OllamaModels } from '@aws-blocks/bb-agent';
+import { Agent, BedrockModels } from '@aws-blocks/bb-agent';
 import { KnowledgeBase } from '@aws-blocks/bb-knowledge-base';
 import { CronJob } from '@aws-blocks/bb-cron-job';
 import { EmailClient } from '@aws-blocks/bb-email-client';
 import { z } from 'zod';
 
+// Keep this infrastructure identifier stable to avoid replacing deployed resources.
 const scope = new Scope('todo-notes-app');
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -142,25 +143,37 @@ function dueSoon(all: Note[], horizonMs: number): Note[] {
 const isLocalStack = process.env.LOCALSTACK_DEPLOY === 'true';
 const kb = isLocalStack ? null : new KnowledgeBase(scope, 'help-docs', {
   source: './knowledge',
-  description: 'Todo-notes app help documentation and FAQs',
+  description: 'Instanote help documentation and FAQs',
 });
 
 // ─── AI assistant — Agent block (Strands under the hood) ────────────────────
-// Locally: canned keyword provider (or Ollama llama3.1:8b if running).
+// Locally: deterministic offline provider by default. A tool-capable Ollama
+// model can be enabled explicitly without changing application code.
 // Deployed: Bedrock Claude Sonnet via global inference profile.
+const ollamaModelId = process.env.INSTANOTE_OLLAMA_MODEL?.trim();
+const localAssistantModels = ollamaModelId
+  ? [{
+      provider: 'openai-api' as const,
+      modelId: ollamaModelId,
+      endpoint: process.env.INSTANOTE_OLLAMA_ENDPOINT?.trim() || 'http://localhost:11434/v1',
+      apiKey: 'ollama',
+    }]
+  : [{ provider: 'canned' as const }];
 const assistant = new Agent(scope, 'assistant', {
   model: {
     // LocalStack does not emulate Bedrock — fall back to the canned provider
     // there so the assistant still exercises the real SQS -> Lambda path.
     deployed: isLocalStack ? [{ provider: 'canned' as const }] : BedrockModels.BALANCED,
-    local: [OllamaModels.SMALL], // canned provider appended implicitly as fallback
+    local: localAssistantModels,
   },
   systemPrompt: [
-    'You are the assistant inside a todo-notes app.',
+    'You are the Notes assistant inside Instanote.',
     'You can search the user\'s notes, list what is due soon, create notes,',
     'and mark notes complete. Use searchHelp for questions about the app itself.',
     'Keep answers short. When summarizing notes, lead with overdue items.',
   ].join(' '),
+  streamingMode: 'token',
+  conversation: { strategy: 'sliding-window', windowSize: 24 },
   toolContextSchema: z.object({ userId: z.string() }),
   tools: (tool) => ({
     searchNotes: tool({
@@ -241,12 +254,54 @@ const mailer = new EmailClient(scope, 'digest-mailer', {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function buildDigestMessage(email: string, due: Note[], now = Date.now()) {
+  const lines = due.map(note => {
+    const when = note.dueDate < now ? 'OVERDUE' : `due ${new Date(note.dueDate).toDateString()}`;
+    return `• ${note.title} — ${when}`;
+  });
+  return {
+    to: email,
+    subject: `Instanote digest: ${due.length} item${due.length > 1 ? 's' : ''} need attention`,
+    body: `Good morning!\n\nDue in the next 24 hours:\n\n${lines.join('\n')}\n`,
+  };
+}
+
 async function requireOwnedConversation(userId: string, conversationId: string) {
   const owned = await assistant.listConversations(userId);
   if (!owned.some(conversation => conversation.conversationId === conversationId)) {
     // Keep this deliberately vague so callers cannot probe conversation IDs.
     throw new Error('Not found');
   }
+}
+
+async function getAssistantRuntimeStatus() {
+  if (isLocalStack) {
+    return { mode: 'localstack' as const, provider: 'canned' as const, model: 'deterministic fallback', ready: true };
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return { mode: 'aws' as const, provider: 'bedrock' as const, model: BedrockModels.BALANCED.modelId, ready: true };
+  }
+
+  if (!ollamaModelId) {
+    return { mode: 'offline' as const, provider: 'canned' as const, model: 'built-in offline agent', ready: true };
+  }
+
+  try {
+    const endpoint = process.env.INSTANOTE_OLLAMA_ENDPOINT?.trim() || 'http://localhost:11434/v1';
+    const response = await fetch(`${endpoint.replace(/\/$/, '')}/models`, {
+      signal: AbortSignal.timeout(1200),
+    });
+    if (response.ok) {
+      const body = await response.json() as { data?: Array<{ id?: string }> };
+      const available = body.data?.some(model => model.id === ollamaModelId) ?? false;
+      if (available) {
+        return { mode: 'offline' as const, provider: 'ollama' as const, model: ollamaModelId, ready: true };
+      }
+    }
+  } catch {
+    // Report the configured model as unavailable below.
+  }
+  return { mode: 'offline' as const, provider: 'ollama' as const, model: ollamaModelId, ready: false };
 }
 
 new CronJob(scope, 'daily-digest', {
@@ -260,16 +315,7 @@ new CronJob(scope, 'daily-digest', {
       const all = await listNotesFor(profile.userId);
       const due = dueSoon(all, DAY_MS);
       if (due.length === 0) continue;
-      const now = Date.now();
-      const lines = due.map(n => {
-        const when = n.dueDate < now ? 'OVERDUE' : `due ${new Date(n.dueDate).toDateString()}`;
-        return `• ${n.title} — ${when}`;
-      });
-      messages.push({
-        to: profile.email,
-        subject: `Todo-notes digest: ${due.length} item${due.length > 1 ? 's' : ''} need attention`,
-        body: `Good morning!\n\nDue in the next 24 hours:\n\n${lines.join('\n')}\n`,
-      });
+      messages.push(buildDigestMessage(profile.email, due));
     }
     if (messages.length > 0) {
       const result = await mailer.sendBatch(messages);
@@ -362,6 +408,16 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     return profile;
   },
 
+  async sendDigestNow() {
+    const user = await auth.requireAuth(context);
+    const profile = await profiles.get({ userId: user.username });
+    if (!profile?.digestEnabled) return { sent: false as const, reason: 'disabled' as const, count: 0 };
+    const due = dueSoon(await listNotesFor(user.username), DAY_MS);
+    if (due.length === 0) return { sent: false as const, reason: 'no-due-notes' as const, count: 0 };
+    const result = await mailer.send(buildDigestMessage(profile.email, due));
+    return { sent: true as const, count: due.length, messageId: result.messageId };
+  },
+
   // ── Help search (KnowledgeBase directly, no agent) ──
   async searchHelp(query: string) {
     await auth.requireAuth(context);
@@ -370,6 +426,11 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
   },
 
   // ── AI assistant ──
+  async getAssistantStatus() {
+    await auth.requireAuth(context);
+    return getAssistantRuntimeStatus();
+  },
+
   async createConversation() {
     const user = await auth.requireAuth(context);
     return { conversationId: await assistant.createConversationId(user.username) };

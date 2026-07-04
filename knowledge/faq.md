@@ -5,6 +5,7 @@
 Open Settings, confirm your email address, and enable the digest. Every day at
 8 AM (Asia/Kolkata) the app emails you a summary of notes that are overdue or
 due within the next 24 hours. Notes without a due date are never included.
+Use Send test digest to verify delivery immediately after saving settings.
 
 ## What can the AI assistant do?
 

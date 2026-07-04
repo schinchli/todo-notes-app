@@ -1,25 +1,33 @@
-# Getting started with Todo Notes
+# Getting started with Instanote
 
-Todo Notes is a personal notes and task app. Each note has a title, an optional
-body, tags, and an optional due date.
+Instanote is a fast personal workspace for ideas, notes, and tasks. Each note
+has a title, optional details, tags, and an optional due date.
 
-## Creating a note
+## Capturing an idea
 
-Type a title in the input box at the top and press Enter or click Add. Expand
-the composer to add a body, comma-separated tags, and a due date.
+Type a title in Quick capture and press Enter or select Add note. Add details,
+comma-separated tags, or a due date when they help give the idea context.
+
+## Finding notes
+
+Search matches note titles, details, and tags immediately. Use All, Open, and
+Completed to change the current view. Sort by recent creation, due date, or
+title.
 
 ## Completing and deleting
 
-Use the checkbox next to a note to mark it complete. Completed notes appear
-struck through. Click the × button to delete a note permanently.
+Select the checkbox beside a note to mark it complete. Completed notes remain
+searchable. Use the × control to delete a note after confirmation.
 
-## Sorting
+## Using tags
 
-Use the Sort buttons to order notes by due date or title. Default order is
-creation order.
+Tags are short, free-form labels. Separate them with commas when capturing a
+note. The Notes assistant can also find notes by tag, such as “find my notes
+tagged work.”
 
-## Tags
+## Asking the Notes assistant
 
-Tags are free-form labels, comma separated when you create or edit a note.
-Use the AI assistant to search notes by tag, for example "find my notes tagged
-work".
+Use the panel on the right to ask about notes, due items, or Instanote itself.
+The status badge shows whether the assistant is using the built-in offline
+agent, opt-in Ollama, LocalStack, or Amazon Bedrock. Actions that change notes
+always pause for approval.
