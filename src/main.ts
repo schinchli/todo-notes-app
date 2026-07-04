@@ -1,5 +1,5 @@
 /**
- * Frontend — src/index.ts
+ * Frontend entry point — src/main.ts
  *
  * A responsive notes workbench with filtering, digest settings, and an AI
  * assistant. All persistence and cloud capabilities stay behind AWS Blocks.
@@ -8,21 +8,11 @@ import { api, authApi } from 'aws-blocks';
 import { AccountMenuBar, AuthenticatedContent, onAuthChange } from '@aws-blocks/blocks/ui';
 import { useChat } from '@aws-blocks/bb-agent/client';
 import { html, render } from 'lit-html';
-import './styles.css';
-
-type Note = {
-  noteId: string;
-  title: string;
-  body: string;
-  tags: string[];
-  dueDate: number;
-  completed: boolean;
-};
+import { filterNotes, getDueMeta, summarizeNotes, type Note, type SortBy, type StatusFilter } from './domain/notes';
+import './styles/app.css';
 
 type ChatMessage = { role: string; content: string };
 type Interrupt = { id: string; name: string; reason?: { tool?: string; input?: unknown } };
-type SortBy = 'dueDate' | 'title' | undefined;
-type StatusFilter = 'all' | 'open' | 'done';
 
 const menuBarEl = document.getElementById('menu-bar')!;
 menuBarEl.appendChild(AccountMenuBar(authApi));
@@ -103,41 +93,9 @@ document.getElementById('app')!.appendChild(
       });
     }
 
-    function dueMeta(dueDate: number) {
-      if (!dueDate) return null;
-      const due = new Date(dueDate);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dueDay = new Date(due);
-      dueDay.setHours(0, 0, 0, 0);
-      const days = Math.round((dueDay.getTime() - today.getTime()) / 86_400_000);
-      const label = days < 0
-        ? `${Math.abs(days)}d overdue`
-        : days === 0 ? 'Due today'
-        : days === 1 ? 'Due tomorrow'
-        : `Due ${due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-      return { label, overdue: days < 0, today: days === 0 };
-    }
-
-    function visibleNotes() {
-      const query = searchQuery.trim().toLowerCase();
-      return notes.filter(note => {
-        const matchesStatus = statusFilter === 'all'
-          || (statusFilter === 'done' ? note.completed : !note.completed);
-        const matchesQuery = !query || [note.title, note.body, ...note.tags]
-          .some(value => value.toLowerCase().includes(query));
-        return matchesStatus && matchesQuery;
-      });
-    }
-
     function redraw() {
-      const openCount = notes.filter(note => !note.completed).length;
-      const doneCount = notes.length - openCount;
-      const dueCount = notes.filter(note => {
-        const meta = dueMeta(note.dueDate);
-        return !note.completed && meta && (meta.overdue || meta.today);
-      }).length;
-      const filteredNotes = visibleNotes();
+      const { openCount, doneCount, dueNowCount: dueCount } = summarizeNotes(notes);
+      const filteredNotes = filterNotes(notes, statusFilter, searchQuery);
 
       render(html`
         ${errorMessage ? html`
@@ -333,7 +291,7 @@ document.getElementById('app')!.appendChild(
     }
 
     function noteCard(note: Note) {
-      const due = dueMeta(note.dueDate);
+      const due = getDueMeta(note.dueDate);
       return html`
         <li class=${`note-card ${note.completed ? 'is-complete' : ''}`}>
           <label class="check-control">

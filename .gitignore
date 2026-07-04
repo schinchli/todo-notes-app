@@ -3,6 +3,7 @@ node_modules
 build-temp
 .blocks-sandbox
 cdk.out/
+.hosting/
 aws-blocks/client.js
 aws-blocks/blocks.spec.json
 .bb-data/

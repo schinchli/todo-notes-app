@@ -11,7 +11,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run build && npm run test:e2e",
+    "check": "npm run typecheck && npm run test:unit && npm run build && npm run test:e2e",
+    "test:unit": "tsx --test test/domain.test.ts",
     "spec": "blocks-generate-spec",
     "dev:server": "tsx watch aws-blocks/scripts/server.ts",
     "dev": "tsx watch aws-blocks/scripts/server.ts",

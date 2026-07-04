@@ -1,135 +1,188 @@
-# Todo Notes — AWS Blocks demo
+# Daymark
 
-Notes app with tags, due dates, an AI assistant, and a daily email digest.
-Built entirely on [AWS Blocks](https://docs.aws.amazon.com/blocks/): every
-feature runs fully local (no AWS account) and deploys to managed AWS services
-with zero code changes.
+Daymark is a local-first todo notes application built with AWS Blocks. It combines structured notes, tags, due dates, realtime updates, a daily email digest, searchable help, and an approval-aware AI assistant in one responsive workspace.
 
-## Features → Blocks
+The same typed application code runs against local mocks, a LocalStack deployment, or managed AWS services. Local development does not require an AWS account.
 
-| Feature | Block | Local | On AWS |
-|---|---|---|---|
-| Notes CRUD (tags, due dates, optimistic locking) | `DistributedTable` | in-memory / `.bb-data` | DynamoDB + GSIs |
-| Sign-in, per-user isolation | `AuthBasic` | local JWT | DynamoDB-backed users |
-| Live sync across tabs | `Realtime` | local WebSocket | API Gateway WebSocket |
-| AI assistant (search notes, list due, create/complete with approval) | `Agent` | canned provider, or Ollama `llama3.1:8b` if running | Bedrock Claude Sonnet (global inference profile) |
-| Help search ("how does X work?") | `KnowledgeBase` over `./knowledge` | TF-IDF | Bedrock Knowledge Bases + S3 Vectors |
-| Daily due-notes digest, 8 AM IST | `CronJob` | in-process timer | EventBridge Scheduler |
-| Digest delivery | `EmailClient` | captured to console + `.bb-data/**/emails.json` | Amazon SES |
+## What it does
 
-## Run locally (no AWS account)
+- Create, search, sort, complete, and delete notes.
+- Add details, tags, and due dates to each note.
+- Keep each account's notes and settings isolated.
+- Synchronize note changes across open clients when realtime transport is available.
+- Ask an assistant to search notes, list upcoming work, or explain the app.
+- Require explicit approval before the assistant creates or completes a note.
+- Search bundled help content through a knowledge base.
+- Send an optional 8:00 AM Asia/Kolkata digest of due and overdue notes.
+- Run locally, deploy to LocalStack, or deploy to AWS without changing application logic.
 
-```bash
-npm install
-npm run dev        # http://localhost:3000
-npm run test:e2e   # e2e tests against the same typed client the UI uses
-npm run typecheck  # TypeScript type checking
-npm run check      # typecheck + production build + full e2e suite
-```
+## Technology
 
-Optional: run `ollama serve` + `ollama pull llama3.1:8b` for real local LLM
-responses; otherwise the assistant uses the built-in canned provider.
-
-## Deploy to LocalStack (real deploy path, no AWS account)
-
-Tests the actual CDK/CloudFormation deployment against emulated AWS on
-`localhost:4566`. Requires Docker (colima works).
-
-```bash
-./scripts/localstack.sh up          # start LocalStack 4.4.0 (last token-free release)
-./scripts/localstack.sh bootstrap   # cdklocal bootstrap
-./scripts/localstack.sh deploy      # deploy + parity fixups + config upload
-./scripts/localstack.sh status      # health + stacks
-./scripts/localstack.sh down        # stop container
-```
-
-What works on community LocalStack: full CRUD API (API Gateway → Lambda →
-DynamoDB with GSIs), auth/JWT sessions, per-user settings, and the AI
-assistant end-to-end via SQS → Lambda (canned model — Bedrock isn't emulated).
-
-Known parity gaps handled automatically by `scripts/localstack.sh` and the
-`LOCALSTACK_DEPLOY=true` branch in `aws-blocks/index.cdk.ts`:
-
-| Gap | Handling |
+| Layer | Implementation |
 |---|---|
-| `latest` image requires a license (since 2026-03) | pinned to `4.4.0`; set `LOCALSTACK_AUTH_TOKEN` + `LOCALSTACK_IMAGE=localstack/localstack:latest` to use a free-tier token |
-| CFN change sets hang / vanish | `--method=direct` deploy |
-| `AWS::ResourceGroups::Group` mock rejects its query JSON | stripped at synth |
-| CloudFront (Hosting) not emulated | skipped at synth; frontend served locally |
-| Bedrock KnowledgeBase not emulated (Ref → `"unknown"`) | KB block skipped; help search degrades gracefully |
-| `nodejs24.x` runtime unknown to LocalStack 4.4 | downgraded to `nodejs22.x` at synth |
-| Custom resources (secrets, GSIs, config upload) silently no-op | re-done post-deploy by the script |
-| API Gateway WebSockets (Realtime) not emulated | `rt.publish` is best-effort in app code |
+| Frontend | TypeScript, Vite, Lit HTML |
+| API | AWS Blocks `ApiNamespace` typed RPC |
+| Authentication | `AuthBasic` |
+| Data | `DistributedTable` / DynamoDB |
+| Realtime | `Realtime` / API Gateway WebSocket |
+| Assistant | `Agent`, local canned/Ollama provider, Amazon Bedrock on AWS |
+| Help search | `KnowledgeBase`, local TF-IDF, Bedrock Knowledge Bases on AWS |
+| Scheduling | `CronJob` / EventBridge Scheduler |
+| Email | `EmailClient` / Amazon SES |
+| Infrastructure | AWS CDK through AWS Blocks |
+| Testing | Node test runner and typed end-to-end API tests |
 
-## Deploy to AWS
+## Requirements
 
-One-time: configure AWS CLI credentials, then bootstrap CDK:
+- Node.js 22 or newer
+- npm
+- Docker for LocalStack testing
+- AWS credentials only for sandbox or production AWS deployments
+- Optional: Ollama with `llama3.1:8b` for local model responses
+
+## Quick start
+
+```bash
+git clone https://github.com/schinchli/todo-notes-app.git
+cd todo-notes-app
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+Local state is stored under `.bb-data/` and is intentionally excluded from Git. Without Ollama, the assistant automatically uses the deterministic canned provider.
+
+## Validation
+
+Run the complete local quality gate:
+
+```bash
+npm run check
+```
+
+This command runs TypeScript checking, domain unit tests, a production frontend build, and the full typed end-to-end suite.
+
+Useful individual commands:
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start the local backend and Vite frontend |
+| `npm run typecheck` | Validate TypeScript without emitting files |
+| `npm run test:unit` | Run pure note-domain tests |
+| `npm run test:e2e` | Exercise auth, data, settings, help, and assistant APIs |
+| `npm run build` | Build the production frontend |
+| `npm run check` | Run every local validation step |
+| `npm run spec` | Regenerate the AWS Blocks API specification |
+
+## LocalStack
+
+LocalStack exercises the actual CDK, CloudFormation, API Gateway, Lambda, DynamoDB, SQS, S3, SSM, Scheduler, and SES paths without using an AWS account.
+
+```bash
+./scripts/localstack.sh up
+./scripts/localstack.sh bootstrap
+./scripts/localstack.sh deploy
+npm run test:e2e
+./scripts/localstack.sh status
+```
+
+The deploy command temporarily points `.blocks-sandbox/config.json` at the LocalStack API. Restore local development afterward:
+
+```json
+{
+  "apiUrl": "http://localhost:3000/aws-blocks/api",
+  "environment": "local"
+}
+```
+
+Community LocalStack does not emulate Bedrock Knowledge Bases, CloudFront hosting, or API Gateway WebSockets completely. The app intentionally degrades help search to an empty result and treats realtime publishing as best-effort in this environment. See [LocalStack details](docs/localstack.md).
+
+## AWS deployment
+
+Bootstrap the target account and region once:
 
 ```bash
 npx cdk bootstrap aws://ACCOUNT_ID/REGION
 ```
 
-Then:
+Then choose a deployment mode:
 
 ```bash
-npm run sandbox           # fast ephemeral backend on AWS, frontend served locally
-npm run deploy            # full CloudFormation deploy (hosting included)
-npm run sandbox:destroy   # tear down sandbox resources
-npm run destroy           # tear down production stack
+npm run sandbox     # AWS backend with frontend served locally
+npm run deploy      # production stack including static hosting
 ```
 
-Before production use:
+Destroy temporary or production resources with `npm run sandbox:destroy` or `npm run destroy`.
 
-- **SES**: verify the `fromAddress` in `aws-blocks/index.ts` (currently
-  `noreply@example.com`) as an SES identity, and request production access to
-  leave the SES sandbox.
-- **Bedrock**: enable model access for the Claude models
-  (the agent uses the `BedrockModels.BALANCED` global inference profile).
-- Knowledge base ingestion runs asynchronously after deploy — gate on
-  `kb.waitUntilSynced()` or check the Bedrock console.
+Before production deployment:
 
-## Project structure
+1. Replace `noreply@example.com` in `aws-blocks/index.ts` with a verified SES identity.
+2. Request SES production access if recipients should not be restricted to verified identities.
+3. Enable access to the configured Bedrock model and verify its availability in the target region.
+4. Prefer `AuthCognito` or `AuthOIDC` when MFA, federation, social login, or enterprise identity is required.
+5. Run `npm run check`, deploy to a sandbox, and smoke-test auth, assistant approvals, realtime behavior, and digest delivery.
 
-| Path | Purpose |
-|------|---------|
-| `aws-blocks/index.ts` | Backend: Blocks, API, agent tools, cron digest |
-| `src/index.ts` | Frontend: lit-html notes UI, settings, assistant chat |
-| `knowledge/` | Help docs ingested by the KnowledgeBase |
-| `test/e2e.test.ts` | E2E suite: auth, CRUD, settings, KB, agent |
-| `index.html` | HTML shell |
+See the full [deployment guide](docs/deployment.md).
 
-## Frontend experience
+## Repository layout
 
-The responsive Daymark workspace includes quick capture, local search and
-status filters, due-date context, digest settings, and an approval-aware
-assistant panel. Draft inputs survive realtime and assistant redraws, and the
-interface includes explicit loading, empty, error, and success states.
+```text
+.
+├── aws-blocks/
+│   ├── index.ts              # Backend blocks, schemas, tools, jobs, and typed API
+│   ├── index.cdk.ts          # CDK stack and LocalStack compatibility adjustments
+│   ├── index.handler.ts      # Lambda adapter
+│   └── scripts/              # AWS Blocks lifecycle entry points
+├── docs/
+│   ├── architecture.md       # Components, boundaries, data, and request flows
+│   ├── deployment.md         # AWS sandbox and production operations
+│   ├── development.md        # Local workflow, conventions, and quality gates
+│   └── localstack.md         # LocalStack workflow and parity notes
+├── knowledge/                # Source documents indexed by KnowledgeBase
+├── scripts/
+│   ├── localstack.sh         # LocalStack lifecycle and parity fixups
+│   └── fix-localstack-gsis.py
+├── src/
+│   ├── domain/notes.ts       # Note types, filtering, due dates, and summary logic
+│   ├── styles/app.css        # Responsive design system and component styling
+│   └── main.ts               # Browser UI, auth shell, notes, settings, and assistant
+├── test/
+│   ├── domain.test.ts        # Pure domain unit tests
+│   └── e2e.test.ts           # Typed API end-to-end tests
+├── index.html                # Accessible HTML shell
+├── package.json              # Scripts and dependencies
+└── cdk.json                  # CDK application configuration
+```
 
-Keyboard focus, semantic labels, reduced-motion preferences, and mobile layouts
-are supported. Destructive deletes require confirmation; agent tools that write
-data continue to use the Blocks approval flow.
+Generated folders such as `dist/`, `build-temp/`, `.hosting/`, `cdk.out/`, `.bb-data/`, and `.blocks-sandbox/` are not source and are excluded from version control.
 
-## Production checklist
+## Architecture and security
 
-- Replace `AuthBasic` with `AuthCognito` or `AuthOIDC` if the app needs MFA,
-  social sign-in, federation, or enterprise identity controls.
-- Configure and verify the SES sender currently represented by
-  `noreply@example.com`, then request SES production access.
-- Enable the selected Bedrock model and confirm regional availability and
-  quotas in the deployment account.
-- Run `npm run check`, deploy to a sandbox, and smoke-test auth, agent approval,
-  realtime updates, and digest delivery before promoting to production.
+Every public API method calls `auth.requireAuth` before accessing user data. DynamoDB partition keys use the authenticated username, note writes use optimistic locking, and assistant conversation reads/writes verify ownership. Agent tools receive the authenticated user ID through validated tool context, and tools that modify state require approval.
 
-## Stack naming
+Inputs are validated at the API boundary for note length, tag limits, due dates, digest email addresses, and assistant message size. Realtime publication is intentionally non-blocking so transport outages cannot roll back successful writes.
 
-Your CloudFormation stack names are derived from the `stackId` in `.blocks/config.json` — generated at scaffold time from your project name plus a random suffix (e.g., `my-app-a3x9kf`). Production deploys as `<stackId>-prod` and sandbox as `<stackId>-<username>-<random>`, where the sandbox identifier is per-machine and stored in `.blocks-sandbox/sandbox-id.txt` (gitignored). This lets multiple developers share a testing account without colliding.
+For diagrams and detailed execution flows, read [architecture.md](docs/architecture.md).
 
-To change the stack name, edit `stackId` in `.blocks/config.json`. For dynamic naming logic, modify `aws-blocks/index.cdk.ts` directly.
+## Documentation
 
-## For Agents
+- [Architecture](docs/architecture.md)
+- [Development workflow](docs/development.md)
+- [Deployment and production checklist](docs/deployment.md)
+- [LocalStack workflow and limitations](docs/localstack.md)
+- [User getting started guide](knowledge/getting-started.md)
+- [User FAQ](knowledge/faq.md)
 
-Full Building Block documentation: `node_modules/@aws-blocks/blocks/README.md`
+## Common troubleshooting
 
-**Do not use local files or in-memory storage** — use Building Blocks for all data persistence and cloud abstractions (they mock locally and deploy to AWS automatically).
+- Port 3000 is already in use: run `npm run cleanup`, then restart development.
+- Tests target the wrong backend: inspect `.blocks-sandbox/config.json` and restore the local URL shown above.
+- Local assistant responses are generic: start Ollama and pull `llama3.1:8b`; otherwise canned responses are expected.
+- LocalStack help search returns no results: Bedrock Knowledge Bases are not emulated; this is expected.
+- Production email fails: verify the configured SES identity and confirm the account is out of the SES sandbox.
+- Production help search is initially empty: knowledge base ingestion is asynchronous; wait for synchronization before testing retrieval.
 
-Start in `aws-blocks/index.ts` (backend) and `src/index.ts` (frontend). Test via `npm run test:e2e`. The API transport (JSON-RPC) is auto-generated and intentionally invisible — do not curl endpoints directly. Testing is best done through the e2e tests which use the same typed client as the frontend.
+## License
+
+No license file is currently included. Add one before distributing the project outside its intended private use.
