@@ -58,7 +58,11 @@ const at = (days, hour = 17) => {
   return d.getTime();
 };
 
+const REMIND = (days, hour = 9) => { const d = new Date(now + days * DAY); d.setHours(hour, 30, 0, 0); return d.getTime(); };
 const SEED = [
+  ['👋 Start here — Instanote feature tour', 'Each seeded note shows something off: overdue pills, tags, reminders (⏰ on the dashboard), the 🔊 Listen button (Polly voices), and 🌐 Translate to French/German/Hindi. Ask the assistant to "plan my day"!', ['tour'], 0, 0],
+  ['Try voice capture', 'Press the 🎙️ Dictate button in Quick capture and speak — your words land in the title, then details. All in-browser, nothing uploaded.', ['tour', 'voice'], 0, REMIND(0, 18)],
+  ['Standup talking points', 'Deployment done via AWS Blocks; demo the Plan-my-day agent and the approval flow.', ['work'], at(0, 11), REMIND(0, 10)],
   ['Renew car insurance', 'Policy #KA-2298 expires — compare premiums before renewing.', ['finance', 'urgent'], at(-2)],
   ['Submit GST filing', 'Q1 returns due — CA has the invoices, needs final approval.', ['finance', 'work'], at(-1)],
   ['Prepare sprint demo', 'Show the notes assistant + digest flow. Keep it under 10 minutes.', ['work'], at(0, 15)],
@@ -76,9 +80,9 @@ const SEED = [
 const existing = await rpc('api.listNotes', []);
 const have = new Set(existing.map(n => n.title));
 let created = 0;
-for (const [title, body, tags, dueDate] of SEED) {
+for (const [title, body, tags, dueDate, reminderAt] of SEED) {
   if (have.has(title)) continue;
-  await rpc('api.createNote', [title, body, tags, dueDate]);
+  await rpc('api.createNote', [title, body, tags, dueDate, reminderAt ?? 0]);
   created++;
 }
 

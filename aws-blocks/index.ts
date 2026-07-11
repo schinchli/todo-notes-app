@@ -48,6 +48,7 @@ const noteSchema = z.object({
   body: bodySchema,
   tags: tagsSchema,
   dueDate: dueDateSchema,
+  reminderAt: z.number().min(0).default(0), // epoch ms; 0 = no reminder
   completed: z.boolean(),
   version: z.number(),       // optimistic locking
   createdAt: z.number(),
@@ -76,6 +77,41 @@ const profiles = new DistributedTable(scope, 'profiles', {
   key: { partitionKey: 'userId' },
 });
 
+// Per-user daily AI usage counters (OWASP A04 abuse control). WAF rate-limits
+// per IP at the edge; this bounds per-ACCOUNT spend on model/TTS calls —
+// which matters most for the shared demo account.
+const aiUsage = new DistributedTable(scope, 'ai-usage', {
+  schema: z.object({
+    userId: z.string(),
+    day: z.string(),      // yyyy-mm-dd (UTC)
+    calls: z.number(),
+    version: z.number(),
+  }),
+  key: { partitionKey: 'userId', sortKey: 'day' },
+});
+
+const AI_DAILY_LIMIT_DEMO = Number(process.env.INSTANOTE_AI_LIMIT_DEMO ?? 40);
+const AI_DAILY_LIMIT_USER = Number(process.env.INSTANOTE_AI_LIMIT_USER ?? 200);
+
+/** Count one AI call for the user; throw when over the daily cap. */
+async function chargeAiCall(username: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  const limit = isDemoUser(username) ? AI_DAILY_LIMIT_DEMO : AI_DAILY_LIMIT_USER;
+  const row = await aiUsage.get({ userId: username, day });
+  if ((row?.calls ?? 0) >= limit) {
+    throw new Error(`Daily AI limit reached (${limit} calls). Try again tomorrow.`);
+  }
+  try {
+    await aiUsage.put(
+      { userId: username, day, calls: (row?.calls ?? 0) + 1, version: (row?.version ?? 0) + 1 },
+      row ? { ifFieldEquals: { version: row.version } } : { ifNotExists: true },
+    );
+  } catch {
+    // Concurrent increment lost the race — the call still counts as allowed;
+    // the cap is an abuse bound, not an exact meter.
+  }
+}
+
 // ─── Realtime ────────────────────────────────────────────────────────────────
 const rt = new Realtime(scope, 'live', {
   namespaces: {
@@ -102,13 +138,14 @@ async function publishNote(userId: string, action: 'created' | 'updated' | 'dele
 }
 
 async function createNoteFor(userId: string, input: {
-  title: string; body?: string; tags?: string[]; dueDate?: number;
+  title: string; body?: string; tags?: string[]; dueDate?: number; reminderAt?: number;
 }): Promise<Note> {
   const validated = z.object({
     title: titleSchema,
     body: bodySchema.default(''),
     tags: tagsSchema.default([]),
     dueDate: dueDateSchema.default(0),
+    reminderAt: z.number().min(0).default(0),
   }).parse(input);
   const now = Date.now();
   const note: Note = {
@@ -118,6 +155,7 @@ async function createNoteFor(userId: string, input: {
     body: validated.body,
     tags: [...new Set(validated.tags)],
     dueDate: validated.dueDate,
+    reminderAt: validated.reminderAt,
     completed: false,
     version: 1,
     createdAt: now,
@@ -130,11 +168,13 @@ async function createNoteFor(userId: string, input: {
 
 async function listNotesFor(userId: string, sortBy?: 'dueDate' | 'title'): Promise<Note[]> {
   const index = sortBy === 'dueDate' ? 'byDueDate' : sortBy === 'title' ? 'byTitle' : undefined;
-  return await Array.fromAsync(
+  const rows = await Array.fromAsync(
     index
       ? notes.query({ index, where: { userId: { equals: userId } } })
       : notes.query({ where: { userId: { equals: userId } } })
   );
+  // Rows written before the reminders feature have no reminderAt attribute.
+  return rows.map(row => ({ ...row, reminderAt: row.reminderAt ?? 0 }));
 }
 
 function dueSoon(all: Note[], horizonMs: number): Note[] {
@@ -308,11 +348,14 @@ const mailer = new EmailClient(scope, 'digest-mailer', {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function buildDigestMessage(email: string, due: Note[], now = Date.now()) {
+function buildDigestMessage(email: string, due: Note[], now = Date.now(), reminders: Note[] = []) {
   const lines = due.map(note => {
     const when = note.dueDate < now ? 'OVERDUE' : `due ${new Date(note.dueDate).toDateString()}`;
     return `• ${note.title} — ${when}`;
   });
+  for (const note of reminders) {
+    lines.push(`⏰ ${note.title} — reminder ${new Date(note.reminderAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  }
   return {
     to: email,
     subject: `Instanote digest: ${due.length} item${due.length > 1 ? 's' : ''} need attention`,
@@ -368,8 +411,12 @@ new CronJob(scope, 'daily-digest', {
       if (!profile.digestEnabled || !profile.email) continue;
       const all = await listNotesFor(profile.userId);
       const due = dueSoon(all, DAY_MS);
-      if (due.length === 0) continue;
-      messages.push(buildDigestMessage(profile.email, due));
+      const now = Date.now();
+      const reminders = all
+        .filter(n => !n.completed && n.reminderAt > 0 && n.reminderAt <= now + DAY_MS && !due.includes(n))
+        .sort((a, b) => a.reminderAt - b.reminderAt);
+      if (due.length === 0 && reminders.length === 0) continue;
+      messages.push(buildDigestMessage(profile.email, due, now, reminders));
     }
     if (messages.length > 0) {
       const result = await mailer.sendBatch(messages);
@@ -388,7 +435,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     return rt.getChannel('notes', user.username);
   },
 
-  async createNote(title: string, body: string = '', tags: string[] = [], dueDate: number = 0) {
+  async createNote(title: string, body: string = '', tags: string[] = [], dueDate: number = 0, reminderAt: number = 0) {
     const user = await auth.requireAuth(context);
     // Resource cap (OWASP A04): bound per-user storage so no account —
     // especially the shared demo one — can flood the table.
@@ -396,7 +443,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     if (existing.length >= MAX_NOTES_PER_USER) {
       throw new Error(`Note limit reached (${MAX_NOTES_PER_USER}). Delete some notes first.`);
     }
-    return createNoteFor(user.username, { title, body, tags, dueDate });
+    return createNoteFor(user.username, { title, body, tags, dueDate, reminderAt });
   },
 
   async listNotes(sortBy?: 'dueDate' | 'title') {
@@ -412,7 +459,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
   },
 
   /** Update note content with optimistic locking. */
-  async updateNote(noteId: string, patch: { title?: string; body?: string; tags?: string[]; dueDate?: number }) {
+  async updateNote(noteId: string, patch: { title?: string; body?: string; tags?: string[]; dueDate?: number; reminderAt?: number }) {
     const user = await auth.requireAuth(context);
     const note = await notes.get({ userId: user.username, noteId });
     if (!note) throw new Error('Note not found');
@@ -421,6 +468,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
       body: bodySchema.optional(),
       tags: tagsSchema.optional(),
       dueDate: dueDateSchema.optional(),
+      reminderAt: z.number().min(0).optional(),
     }).parse(patch);
     const updated = {
       ...note,
@@ -492,6 +540,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
   /** Translate a note to French, German, Hindi, or English via the quick-AI agent. */
   async translateNote(noteId: string, language: 'french' | 'german' | 'hindi' | 'english') {
     const user = await auth.requireAuth(context);
+    await chargeAiCall(user.username);
     const lang = LANGUAGES[languageSchema.parse(language)];
     const note = await notes.get({ userId: user.username, noteId });
     if (!note) throw new Error('Note not found');
@@ -509,7 +558,8 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
    * falls back to the browser's built-in speech synthesis.
    */
   async synthesizeSpeech(text: string, language: 'french' | 'german' | 'hindi' | 'english' = 'english') {
-    await auth.requireAuth(context);
+    const user = await auth.requireAuth(context);
+    await chargeAiCall(user.username);
     const lang = LANGUAGES[languageSchema.parse(language)];
     const clipped = z.string().trim().min(1).max(3000).parse(text);
     try {
@@ -537,6 +587,39 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     }
   },
 
+  /**
+   * Dashboard: everything the workbench strip needs in one call —
+   * counts, today's agenda (overdue + due today), and upcoming reminders.
+   */
+  async getDashboard(tzOffsetMinutes: number = 0) {
+    const user = await auth.requireAuth(context);
+    const offset = z.number().min(-14 * 60).max(14 * 60).parse(tzOffsetMinutes);
+    const { end } = todayWindow(offset);
+    const all = await listNotesFor(user.username);
+    const now = Date.now();
+    const open = all.filter(n => !n.completed);
+    const today = open
+      .filter(n => n.dueDate > 0 && n.dueDate < end)
+      .sort((a, b) => a.dueDate - b.dueDate)
+      .map(n => ({ noteId: n.noteId, title: n.title, dueDate: n.dueDate, tags: n.tags, overdue: n.dueDate < now }));
+    const reminders = open
+      .filter(n => n.reminderAt > 0)
+      .sort((a, b) => a.reminderAt - b.reminderAt)
+      .slice(0, 10)
+      .map(n => ({ noteId: n.noteId, title: n.title, reminderAt: n.reminderAt, missed: n.reminderAt < now }));
+    return {
+      counts: {
+        open: open.length,
+        overdue: open.filter(n => n.dueDate > 0 && n.dueDate < now).length,
+        dueToday: today.filter(n => !n.overdue).length,
+        withReminders: open.filter(n => n.reminderAt > 0).length,
+        completed: all.length - open.length,
+      },
+      today,
+      reminders,
+    };
+  },
+
   /** Today's agenda: overdue + due-today incomplete notes, soonest first. */
   async listToday(tzOffsetMinutes: number = 0) {
     const user = await auth.requireAuth(context);
@@ -553,6 +636,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
   /** Daily-planner agent: an ordered, time-blocked plan for today. */
   async planMyDay(tzOffsetMinutes: number = 0) {
     const user = await auth.requireAuth(context);
+    await chargeAiCall(user.username);
     const offset = z.number().min(-14 * 60).max(14 * 60).parse(tzOffsetMinutes);
     const { end } = todayWindow(offset);
     const all = await listNotesFor(user.username);
@@ -598,6 +682,7 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async sendMessage(conversationId: string, message: string, channelId: string) {
     const user = await auth.requireAuth(context);
+    await chargeAiCall(user.username);
     await requireOwnedConversation(user.username, conversationId);
     const validatedMessage = z.string().trim().min(1, 'Message is required').max(8000, 'Message is too long').parse(message);
     await assistant.stream(validatedMessage, {

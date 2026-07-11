@@ -43,7 +43,15 @@ document.getElementById('app')!.appendChild(
     let errorMessage = '';
     let toastMessage = '';
     let toastTimer: ReturnType<typeof setTimeout> | undefined;
-    let draft = { title: '', body: '', tags: '', due: '' };
+    let draft = { title: '', body: '', tags: '', due: '', reminder: '' };
+    type Dashboard = {
+      counts: { open: number; overdue: number; dueToday: number; withReminders: number; completed: number };
+      today: { noteId: string; title: string; dueDate: number; tags: string[]; overdue: boolean }[];
+      reminders: { noteId: string; title: string; reminderAt: number; missed: boolean }[];
+    };
+    let dashboard: Dashboard | null = null;
+    let dictating = false;
+    let recognition: any = null;
     // Quick AI per-note state: translations + speech busy flags
     type NoteExtras = { translated?: { language: string; languageName: string; bcp47: string; text: string }; translating?: boolean; speaking?: boolean };
     const noteExtras = new Map<string, NoteExtras>();
@@ -96,7 +104,10 @@ document.getElementById('app')!.appendChild(
     async function load(initial = false) {
       if (initial) notesLoading = true;
       await runAction(async () => {
-        notes = await api.listNotes(sortBy);
+        [notes, dashboard] = await Promise.all([
+          api.listNotes(sortBy),
+          api.getDashboard(tzOffsetMinutes),
+        ]);
         notesLoading = false;
         redraw();
       });
@@ -127,9 +138,37 @@ document.getElementById('app')!.appendChild(
             <strong>${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</strong>
           </div>
           <div class="metric"><strong>${openCount}</strong><span>Open</span></div>
-          <div class="metric ${dueCount ? 'metric-warm' : ''}"><strong>${dueCount}</strong><span>Due now</span></div>
+          <div class="metric ${dashboard?.counts.overdue ? 'metric-warm' : ''}"><strong>${dashboard?.counts.overdue ?? 0}</strong><span>Overdue</span></div>
+          <div class="metric ${dueCount ? 'metric-warm' : ''}"><strong>${dashboard?.counts.dueToday ?? dueCount}</strong><span>Due today</span></div>
+          <div class="metric"><strong>${dashboard?.counts.withReminders ?? 0}</strong><span>Reminders</span></div>
           <div class="metric"><strong>${doneCount}</strong><span>Completed</span></div>
         </section>
+
+        ${dashboard && (dashboard.today.length || dashboard.reminders.length) ? html`
+          <section class="dashboard-agenda" aria-label="Today's agenda">
+            ${dashboard.today.length ? html`
+              <div class="agenda-block">
+                <span class="eyebrow">Today's agenda</span>
+                <ul>${dashboard.today.map(item => html`
+                  <li class=${item.overdue ? 'agenda-overdue' : ''}>
+                    <button class="agenda-check" aria-label=${`Complete ${item.title}`} @click=${() => toggle(item.noteId)}>✓</button>
+                    <span>${item.title}</span>
+                    <em>${item.overdue ? 'overdue' : new Date(item.dueDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</em>
+                  </li>`)}
+                </ul>
+              </div>` : ''}
+            ${dashboard.reminders.length ? html`
+              <div class="agenda-block">
+                <span class="eyebrow">⏰ Reminders</span>
+                <ul>${dashboard.reminders.map(item => html`
+                  <li class=${item.missed ? 'agenda-overdue' : ''}>
+                    <span>${item.title}</span>
+                    <em>${new Date(item.reminderAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</em>
+                  </li>`)}
+                </ul>
+              </div>` : ''}
+          </section>
+        ` : ''}
 
         <div class="workspace-grid">
           <main class="notes-workspace">
@@ -140,6 +179,10 @@ document.getElementById('app')!.appendChild(
                   <h2 id="capture-title">What needs your attention?</h2>
                 </div>
                 <span class="key-hint">Enter to save</span>
+                <button class=${`button ${dictating ? 'button-primary' : 'button-quiet'} mic-button`}
+                  aria-pressed=${dictating}
+                  aria-label=${dictating ? 'Stop dictation' : 'Dictate a note'}
+                  @click=${toggleDictation}>${dictating ? '⏹ Stop' : '🎙️ Dictate'}</button>
               </div>
               <div class="capture-form">
                 <label class="field field-title">
@@ -167,6 +210,11 @@ document.getElementById('app')!.appendChild(
                     <span>Due date <em>optional</em></span>
                     <input id="new-due" type="date" .value=${draft.due}
                       @input=${(e: InputEvent) => { draft.due = (e.target as HTMLInputElement).value; }} />
+                  </label>
+                  <label class="field field-date">
+                    <span>Reminder <em>optional</em></span>
+                    <input id="new-reminder" type="datetime-local" .value=${draft.reminder}
+                      @input=${(e: InputEvent) => { draft.reminder = (e.target as HTMLInputElement).value; }} />
                   </label>
                   <button class="button button-primary add-button" @click=${addNote} ?disabled=${!draft.title.trim()}>
                     Add note
@@ -435,6 +483,67 @@ document.getElementById('app')!.appendChild(
       speakText(note.noteId, [note.title, note.body].filter(Boolean).join('. '), 'english', 'en-US');
     }
 
+    /**
+     * Voice capture — browser SpeechRecognition (local-first: no backend, no
+     * audio upload). Dictation fills the title first, then flows into details.
+     */
+    function toggleDictation() {
+      if (dictating) {
+        recognition?.stop();
+        return;
+      }
+      const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+      if (!SR) {
+        errorMessage = 'Voice capture is not supported in this browser — try Chrome or Edge.';
+        redraw();
+        return;
+      }
+      recognition = new SR();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = navigator.language || 'en-US';
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results as ArrayLike<any>)
+          .slice(event.resultIndex)
+          .map(r => r[0].transcript)
+          .join(' ')
+          .trim();
+        if (!transcript) return;
+        if (!draft.title.trim()) draft.title = transcript;
+        else draft.body = draft.body ? `${draft.body} ${transcript}` : transcript;
+        redraw();
+      };
+      recognition.onend = () => { dictating = false; redraw(); };
+      recognition.onerror = (event: any) => {
+        dictating = false;
+        if (event.error !== 'aborted') errorMessage = `Voice capture error: ${event.error}`;
+        redraw();
+      };
+      dictating = true;
+      recognition.start();
+      redraw();
+    }
+
+    /**
+     * Reminder notifications — while the app is open, fire a browser
+     * notification (or toast fallback) when a note's reminder time passes.
+     */
+    const notified = new Set<string>();
+    setInterval(() => {
+      if (!dashboard) return;
+      const now = Date.now();
+      for (const item of dashboard.reminders) {
+        if (item.reminderAt <= now && item.reminderAt > now - 90_000 && !notified.has(item.noteId)) {
+          notified.add(item.noteId);
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Instanote reminder', { body: item.title });
+          } else {
+            showToast(`⏰ Reminder: ${item.title}`);
+          }
+        }
+      }
+    }, 30_000);
+
     async function planMyDay() {
       planLoading = true;
       redraw();
@@ -456,7 +565,7 @@ document.getElementById('app')!.appendChild(
         const tags = [...new Set(draft.tags.split(',').map(tag => tag.trim()).filter(Boolean))];
         const dueDate = draft.due ? new Date(`${draft.due}T12:00:00`).getTime() : 0;
         await api.createNote(title, draft.body.trim(), tags, dueDate);
-        draft = { title: '', body: '', tags: '', due: '' };
+        draft = { title: '', body: '', tags: '', due: '', reminder: '' };
         await load();
         showToast('Note added');
         requestAnimationFrame(() => (container.querySelector('#new-title') as HTMLInputElement | null)?.focus());

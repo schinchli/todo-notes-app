@@ -296,6 +296,42 @@ test('quick AI: planMyDay produces a plan from open notes', async () => {
   await api.deleteNote(note.noteId);
 });
 
+// ─── Reminders + dashboard ────────────────────────────────────────────────────
+
+test('reminders: createNote persists reminderAt and dashboard surfaces it', async () => {
+  const reminderAt = Date.now() + 2 * 60 * 60 * 1000;
+  const note = await api.createNote('Reminder note', '', ['test'], 0, reminderAt);
+  assert.strictEqual(note.reminderAt, reminderAt);
+
+  const dash = await api.getDashboard(-new Date().getTimezoneOffset());
+  assert.ok(dash.counts.withReminders >= 1);
+  const item = dash.reminders.find(r => r.noteId === note.noteId);
+  assert.ok(item, 'reminder listed on dashboard');
+  assert.strictEqual(item?.missed, false);
+  await api.deleteNote(note.noteId);
+});
+
+test('reminders: updateNote can set and clear a reminder', async () => {
+  const note = await api.createNote('Reminder patch note');
+  assert.strictEqual(note.reminderAt, 0);
+  const when = Date.now() + 60 * 60 * 1000;
+  const updated = await api.updateNote(note.noteId, { reminderAt: when });
+  assert.strictEqual(updated.reminderAt, when);
+  const cleared = await api.updateNote(note.noteId, { reminderAt: 0 });
+  assert.strictEqual(cleared.reminderAt, 0);
+  await api.deleteNote(note.noteId);
+});
+
+test('dashboard: counts and today agenda are consistent', async () => {
+  const overdue = await api.createNote('Dash overdue', '', [], Date.now() - 24 * 60 * 60 * 1000);
+  const dash = await api.getDashboard(-new Date().getTimezoneOffset());
+  assert.ok(dash.counts.open >= 1);
+  assert.ok(dash.counts.overdue >= 1);
+  const item = dash.today.find(t => t.noteId === overdue.noteId);
+  assert.ok(item?.overdue, 'overdue note appears in today agenda flagged overdue');
+  await api.deleteNote(overdue.noteId);
+});
+
 // ─── Knowledge base (local: TF-IDF over ./knowledge) ─────────────────────────
 
 test('help: knowledge base returns relevant chunks', async () => {

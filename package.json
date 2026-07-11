@@ -25,7 +25,9 @@
     "deploy": "tsx aws-blocks/scripts/deploy.ts",
     "destroy": "tsx aws-blocks/scripts/destroy.ts",
     "test:e2e": "tsx --test-force-exit -C browser test/e2e.test.ts",
-    "vendorize": "blocks-vendorize"
+    "vendorize": "blocks-vendorize",
+    "check:fast": "npm run typecheck && npm run test:unit && npm run test:e2e",
+    "ship": "npm run check:fast && npm run deploy"
   },
   "dependencies": {
     "@aws-blocks/blocks": "*",

@@ -348,3 +348,13 @@ textarea { resize: vertical; line-height: 1.55; }
   background: color-mix(in srgb, currentColor 5%, transparent);
 }
 .day-plan-text { white-space: pre-wrap; }
+
+/* ── Dashboard agenda + mic ── */
+.dashboard-agenda { display: flex; gap: 20px; flex-wrap: wrap; margin: 14px 0; }
+.agenda-block { flex: 1; min-width: 260px; border: 1px solid var(--border, #d8dee9); border-radius: 12px; padding: 12px 14px; }
+.agenda-block ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.agenda-block li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: .92rem; }
+.agenda-block li em { margin-left: auto; font-style: normal; font-size: .8rem; opacity: .7; }
+.agenda-overdue em { color: #c62828; font-weight: 600; opacity: 1; }
+.agenda-check { border: 1px solid var(--border, #d8dee9); background: transparent; border-radius: 6px; cursor: pointer; padding: 0 6px; }
+.mic-button { margin-left: 8px; }
