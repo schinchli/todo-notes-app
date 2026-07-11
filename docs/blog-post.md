@@ -11,6 +11,9 @@ The problem is one I live with: notes scattered across three apps, tasks with no
 Here's the walkthrough, with why each feature earns its place in *my* day:
 
 - **Capture and organize.** Create, search, sort, complete, and delete notes with details, tags, and due dates. Changes sync across open clients in realtime over WebSockets. Payoff: one inbox for my brain instead of three.
+- **🎙️ Voice capture.** Dictate straight into quick capture using the browser's SpeechRecognition API — local-first, so no audio is ever uploaded anywhere. Payoff: I catch ideas while pacing, which is where all my ideas happen.
+- **⏰ Per-note reminders.** Attach a date-time to any note; a dashboard strip surfaces them, browser notifications fire while the app is open, and reminders fold into the 8 AM digest. Payoff: due dates say *what*, reminders say *when to actually start*.
+- **The workbench dashboard.** Open/overdue/due-today/reminder counts plus today's agenda with one-click complete. Payoff: my whole day triaged in one glance, checked off without leaving the strip.
 - **The notes assistant (with approvals).** A chat panel searches my notes, lists what's due in the next seven days, answers how-to questions from bundled help docs — and can *propose* creating or completing a note. Any state-changing tool pauses for an Approve/Deny click. Payoff: I can delegate to the AI without ever wondering what it silently rewrote.
 - **One-click "Plan my day."** The planner gathers my overdue, due-today, upcoming, and undated notes and asks Bedrock for a numbered, priority-ordered plan with a morning/afternoon/evening time block per item, overdue first. Payoff: it kills the what-do-I-do-first paralysis before my coffee cools.
 - **Today's agenda.** A dedicated API returns overdue plus due-today items, soonest first, timezone-aware. Payoff: the glanceable version of the plan when I don't need prose.
@@ -18,7 +21,7 @@ Here's the walkthrough, with why each feature earns its place in *my* day:
 - **Listen to notes as MP3.** Amazon Polly neural voices — Léa (French), Vicki (German), Kajal (Hindi), Joanna (English). If Polly is unreachable locally, the browser's speech synthesis takes over. Payoff: notes become audio while I'm making breakfast.
 - **Semantic help search.** Bedrock Knowledge Bases with S3 Vectors indexes the bundled documentation, so "how do digests work?" gets an actual answer. Payoff: the app explains itself; I don't have to.
 - **Daily 8 AM email digest.** EventBridge Scheduler mails every due and overdue item each morning (Asia/Kolkata), with a "send test digest now" button to verify delivery first. Payoff: one calm email replaces my anxiety scroll through the app.
-- **Hardened sharing.** WAF rate limiting, a strict CSP, per-user note caps, and a demo account that cannot delete notes or redirect email. Payoff: productivity you can share safely — the demo link at the bottom exists because of this.
+- **Hardened sharing.** WAF rate limiting, a strict CSP, per-user note caps, per-account daily AI-call limits (the demo account gets 40/day), and a demo account that cannot delete notes or redirect email. Payoff: productivity you can share safely — the demo link below exists because the shared account can't quietly become someone's free LLM proxy.
 
 ## 🛠️ How I Built It
 
@@ -37,6 +40,8 @@ Community LocalStack also doesn't emulate Bedrock, SES v2, or CloudFront. Rather
 **Stage 3 — one command to AWS.** `npm run deploy`. Identical application logic, now backed by DynamoDB, Bedrock, Polly, SES, EventBridge Scheduler, and CloudFront.
 
 **The offline AgentCore experiment.** In `agentcore/` I rebuilt the same agent brain on the Amazon Bedrock AgentCore runtime contract — fully offline. `agent.py` serves the real contract (`POST /invocations`, `GET /ping`) via `BedrockAgentCoreApp`, running a Strands agent on Ollama. `gateway.py` is a local stand-in for AgentCore Gateway: an MCP server over streamable HTTP exposing Instanote's typed API as five tools. `memory.py` provides file-backed short-term events and long-term facts, with OpenTelemetry spans per invocation and a `smoke.py` validator. Promotion path to managed AgentCore: swap the Ollama model for a Bedrock model ID and point at a real Gateway URL — the entrypoint doesn't change.
+
+**The later features rode the same loop.** Voice capture never touched the backend at all — it's pure browser SpeechRecognition, which is exactly why no audio leaves the machine. Reminders cut across the stack (note schema, dashboard API, browser notifications, digest builder) and were built and tested entirely against local mocks before redeploying. The per-account AI-call limiter is just one more `DistributedTable` with optimistic-locked counters — a deliberate second layer on top of WAF, because IP rate limiting protects infrastructure while per-account caps protect the *Bedrock bill* from a shared demo login.
 
 **Quality gate.** 26 typed end-to-end tests (auth, optimistic-locking CRUD, realtime delivery, digest email, translation, Polly degradation, planner, knowledge retrieval, approval denial, conversation owner-scoping) plus TypeScript checking behind one `npm run check`.
 
@@ -85,13 +90,32 @@ EventBridge Scheduler (8 AM cron) ──▶ Lambda ──▶ SES (digest email)
 
 **Security is cheap when the platform has hooks.** The full OWASP Top 10 mapping (`docs/security.md`) mostly cost configuration, not engineering — which is exactly how it should be.
 
+## 💰 What It Costs to Run (and How to Tear It Down)
+
+Judges (and weekend builders) deserve real numbers, so I verified every figure against the AWS pricing pages in July 2026. For light personal use — a few users, ~30 assistant conversations, ~100 quick-AI calls, ~100 Polly reads a month — Instanote lands at **roughly $9–14/month** (~$12 typical).
+
+The top three drivers tell the story: **AWS WAF's fixed fee (~$6/month — half the bill)**, **Bedrock tokens (~$2.50–3.50)**, and **Polly neural (~$2.40, free for year one under the 1M-chars/month tier)**. Everything else — Lambda, CloudFront, EventBridge Scheduler, DynamoDB storage, SES — sits inside always-free allowances at this scale. New AWS accounts get the credit-based Free Plan ($100 sign-up + $100 onboarding = $200, valid 6 months), which absorbs the whole thing. And because the stack is fully serverless, **at idle the bill collapses to basically the WAF fee** plus pennies of storage.
+
+When the weekend is over, teardown is honest too:
+
+```bash
+npm run destroy                      # tears down the production stack
+# RETAIN-ed resources survive on purpose — delete manually:
+aws s3 rb s3://<kb-data-bucket> --force        # KnowledgeBase data bucket
+aws s3vectors list-vector-buckets              # then delete index + vector bucket
+aws cloudformation delete-stack --stack-name CDKToolkit   # optional, if nothing else uses CDK
+./scripts/localstack.sh down         # local leftovers
+```
+
+The full worksheet — line-by-line estimates, free-tier notes, and a Well-Architected cross-check — lives in `docs/pricing-and-cleanup.md`.
+
 ## 🔗 Try It / Links
 
-- **Live demo:** LIVE_URL_PLACEHOLDER
-- **Source:** https://github.com/schinchli/todo-notes-app
-<!-- NOTE: the repo is currently private — either make it public before submitting, or rely on the live URL for judging. -->
-- **Demo account:** `demo@instanote.app` (password shared separately). Hardened by design: it cannot delete notes or change the digest email address, so the seeded data survives every visitor.
+- **Source & full architecture:** https://github.com/schinchli/todo-notes-app — a public repo with all the code: the CDK/AWS Blocks stack, the offline AgentCore experiment, `docs/security.md` (OWASP Top 10 mapping), and `docs/pricing-and-cleanup.md`. Clone it and `npm run dev` runs the entire app on your laptop with **zero AWS account**.
+- **Run it yourself:** `npx cdk bootstrap && npm run deploy` stands up the identical stack in your own account (the demo account seeds with `node scripts/seed-demo.mjs`); `npm run destroy` takes it back to zero.
 
-Sign in, hit "Plan my day," approve the note the assistant proposes, and let Kajal read it back in Hindi. That thirty-second loop is why I built this.
+🎬 **Video walkthrough:** coming soon — the app is camera-ready, the narrator (me) is still negotiating with his own calendar. Ironically, Instanote just scheduled the recording as an overdue note.
 
-<!-- Word count: ~1,500 words of prose (1,880 total by wc -w, including table and diagram markup) -->
+The thirty-second loop that made me build this: hit "Plan my day," approve the note the assistant proposes, and let Kajal read it back in Hindi.
+
+<!-- Word count: ~1,950 words of prose (2,373 total by wc -w, including tables, code blocks, and diagram markup) -->
