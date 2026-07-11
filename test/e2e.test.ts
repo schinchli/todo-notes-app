@@ -242,6 +242,60 @@ test('digest: sends due notes through EmailClient', async () => {
   if (result.sent) assert.ok(result.messageId);
 });
 
+// ─── Quick AI: translate · speech · today · planner ──────────────────────────
+
+test('quick AI: translateNote returns a translation payload', async () => {
+  const note = await api.createNote('Translation test note', 'A short body to translate');
+  const result = await api.translateNote(note.noteId, 'french');
+  assert.strictEqual(result.language, 'french');
+  assert.strictEqual(result.languageName, 'French');
+  assert.strictEqual(result.bcp47, 'fr-FR');
+  assert.ok(result.translated.length > 0, 'translated text is non-empty (canned provider locally)');
+  await api.deleteNote(note.noteId);
+});
+
+test('quick AI: translateNote rejects unsupported languages', async () => {
+  const note = await api.createNote('Language validation note');
+  await assert.rejects(() => api.translateNote(note.noteId, 'klingon' as never));
+  await api.deleteNote(note.noteId);
+});
+
+test('quick AI: synthesizeSpeech degrades gracefully without AWS credentials', async () => {
+  const result = await api.synthesizeSpeech('Hello from the test suite', 'english');
+  if (result.available) {
+    assert.ok(result.audioBase64!.length > 0);
+    assert.strictEqual(result.format, 'mp3');
+  } else {
+    assert.strictEqual(result.bcp47, 'en-US');
+    assert.ok(result.reason);
+  }
+});
+
+test('quick AI: listToday returns overdue and due-today items, soonest first', async () => {
+  const overdue = await api.createNote('Overdue task', '', [], Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const todayNote = await api.createNote('Due later today', '', [], Date.now() + 60 * 60 * 1000);
+  const nextWeek = await api.createNote('Due next week', '', [], Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+  const today = await api.listToday(-new Date().getTimezoneOffset());
+  const ids = today.map(n => n.noteId);
+  assert.ok(ids.includes(overdue.noteId), 'overdue note included');
+  assert.ok(ids.includes(todayNote.noteId), 'due-today note included');
+  assert.ok(!ids.includes(nextWeek.noteId), 'next-week note excluded');
+  assert.strictEqual(today.find(n => n.noteId === overdue.noteId)?.overdue, true);
+  const dues = today.map(n => n.dueDate);
+  for (let i = 1; i < dues.length; i++) assert.ok(dues[i] >= dues[i - 1], 'sorted soonest first');
+
+  for (const id of [overdue.noteId, todayNote.noteId, nextWeek.noteId]) await api.deleteNote(id);
+});
+
+test('quick AI: planMyDay produces a plan from open notes', async () => {
+  const note = await api.createNote('Planner input task', '', ['work'], Date.now() + 60 * 60 * 1000);
+  const result = await api.planMyDay(-new Date().getTimezoneOffset());
+  assert.ok(result.noteCount >= 1, 'counted at least the seeded note');
+  assert.ok(result.plan.length > 0, 'plan text is non-empty');
+  await api.deleteNote(note.noteId);
+});
+
 // ─── Knowledge base (local: TF-IDF over ./knowledge) ─────────────────────────
 
 test('help: knowledge base returns relevant chunks', async () => {

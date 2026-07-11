@@ -44,6 +44,12 @@ document.getElementById('app')!.appendChild(
     let toastMessage = '';
     let toastTimer: ReturnType<typeof setTimeout> | undefined;
     let draft = { title: '', body: '', tags: '', due: '' };
+    // Quick AI per-note state: translations + speech busy flags
+    type NoteExtras = { translated?: { language: string; languageName: string; bcp47: string; text: string }; translating?: boolean; speaking?: boolean };
+    const noteExtras = new Map<string, NoteExtras>();
+    let dayPlan = '';
+    let planLoading = false;
+    const tzOffsetMinutes = -new Date().getTimezoneOffset();
 
     const chat = useChat({
       api: {
@@ -262,10 +268,23 @@ document.getElementById('app')!.appendChild(
             <p class="assistant-intro">Ask about your list, find help, or prepare a note. You approve every change before it happens.</p>
 
             <div class="suggestion-list" aria-label="Suggested questions">
+              <button class="plan-day-button" ?disabled=${planLoading} @click=${planMyDay}>
+                ${planLoading ? 'Planning…' : '📋 Plan my day'}
+              </button>
               ${['What is due this week?', 'Summarize my open notes', 'How does the digest work?'].map(prompt => html`
                 <button @click=${() => sendChat(prompt)}>${prompt}</button>
               `)}
             </div>
+
+            ${dayPlan ? html`
+              <div class="day-plan" role="region" aria-label="Today's plan">
+                <div class="translation-heading">
+                  <span class="eyebrow">Today's plan</span>
+                  <button class="icon-button" aria-label="Dismiss plan" @click=${() => { dayPlan = ''; redraw(); }}>×</button>
+                </div>
+                <p class="note-body day-plan-text">${dayPlan}</p>
+              </div>
+            ` : ''}
 
             <div class="chat-log" id="chat-log" aria-live="polite">
               ${chatMessages.length === 0 ? html`
@@ -314,6 +333,7 @@ document.getElementById('app')!.appendChild(
 
     function noteCard(note: Note) {
       const due = getDueMeta(note.dueDate);
+      const extras = noteExtras.get(note.noteId);
       return html`
         <li class=${`note-card ${note.completed ? 'is-complete' : ''}`}>
           <label class="check-control">
@@ -330,10 +350,100 @@ document.getElementById('app')!.appendChild(
             ${note.tags.length ? html`
               <div class="tag-list">${note.tags.map(tag => html`<span>${tag}</span>`)}</div>
             ` : ''}
+            <div class="note-actions">
+              <button class="button button-quiet note-action" ?disabled=${extras?.speaking}
+                aria-label=${`Listen to ${note.title}`}
+                @click=${() => speakNote(note)}>${extras?.speaking ? 'Playing…' : '🔊 Listen'}</button>
+              <label class="note-action translate-control">
+                <span class="sr-only">Translate ${note.title}</span>
+                <select ?disabled=${extras?.translating}
+                  @change=${(e: Event) => {
+                    const value = (e.target as HTMLSelectElement).value;
+                    (e.target as HTMLSelectElement).value = '';
+                    if (value) translateNote(note, value as 'french' | 'german' | 'hindi');
+                  }}>
+                  <option value="" selected>${extras?.translating ? 'Translating…' : '🌐 Translate'}</option>
+                  <option value="french">French</option>
+                  <option value="german">German</option>
+                  <option value="hindi">हिन्दी Hindi</option>
+                </select>
+              </label>
+            </div>
+            ${extras?.translated ? html`
+              <div class="translation-card">
+                <div class="translation-heading">
+                  <span class="eyebrow">${extras.translated.languageName}</span>
+                  <span>
+                    <button class="button button-quiet note-action" ?disabled=${extras?.speaking}
+                      @click=${() => speakText(note.noteId, extras.translated!.text, extras.translated!.language, extras.translated!.bcp47)}>
+                      🔊 Listen in ${extras.translated.languageName}</button>
+                    <button class="icon-button" aria-label="Dismiss translation"
+                      @click=${() => { noteExtras.set(note.noteId, { ...extras, translated: undefined }); redraw(); }}>×</button>
+                  </span>
+                </div>
+                <p class="note-body">${extras.translated.text}</p>
+              </div>
+            ` : ''}
           </div>
           <button class="icon-button delete-button" aria-label=${`Delete ${note.title}`} @click=${() => remove(note)}>×</button>
         </li>
       `;
+    }
+
+    async function translateNote(note: Note, language: 'french' | 'german' | 'hindi') {
+      noteExtras.set(note.noteId, { ...noteExtras.get(note.noteId), translating: true });
+      redraw();
+      await runAction(async () => {
+        const result = await api.translateNote(note.noteId, language);
+        noteExtras.set(note.noteId, {
+          translating: false,
+          translated: { language: result.language, languageName: result.languageName, bcp47: result.bcp47, text: result.translated },
+        });
+        redraw();
+      });
+      const extras = noteExtras.get(note.noteId);
+      if (extras?.translating) { noteExtras.set(note.noteId, { ...extras, translating: false }); redraw(); }
+    }
+
+    /** Polly MP3 when deployed; browser speech synthesis as offline fallback. */
+    async function speakText(noteId: string, text: string, language: string, bcp47: string) {
+      noteExtras.set(noteId, { ...noteExtras.get(noteId), speaking: true });
+      redraw();
+      const done = () => { noteExtras.set(noteId, { ...noteExtras.get(noteId), speaking: false }); redraw(); };
+      try {
+        const result = await api.synthesizeSpeech(text, language as 'french' | 'german' | 'hindi' | 'english');
+        if (result.available) {
+          const audio = new Audio(`data:audio/mp3;base64,${result.audioBase64}`);
+          audio.addEventListener('ended', done);
+          audio.addEventListener('error', done);
+          await audio.play();
+          return;
+        }
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = bcp47;
+        utterance.addEventListener('end', done);
+        utterance.addEventListener('error', done);
+        window.speechSynthesis.speak(utterance);
+      } catch (error) {
+        done();
+        errorMessage = friendlyError(error);
+        redraw();
+      }
+    }
+
+    function speakNote(note: Note) {
+      speakText(note.noteId, [note.title, note.body].filter(Boolean).join('. '), 'english', 'en-US');
+    }
+
+    async function planMyDay() {
+      planLoading = true;
+      redraw();
+      await runAction(async () => {
+        const result = await api.planMyDay(tzOffsetMinutes);
+        dayPlan = result.plan;
+      });
+      planLoading = false;
+      redraw();
     }
 
     async function addNote() {

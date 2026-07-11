@@ -327,3 +327,24 @@ textarea { resize: vertical; line-height: 1.55; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ── Quick AI: note actions, translations, day plan ── */
+.note-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+.note-action { font-size: 0.8rem; padding: 4px 10px; }
+.translate-control select {
+  border: 1px solid var(--border, #d8dee9); border-radius: 8px;
+  padding: 4px 8px; font-size: 0.8rem; background: transparent; color: inherit; cursor: pointer;
+}
+.translation-card {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid var(--border, #d8dee9);
+}
+.translation-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.plan-day-button { font-weight: 600; }
+.day-plan {
+  margin: 10px 0; padding: 12px; border-radius: 12px;
+  border: 1px solid var(--border, #d8dee9);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.day-plan-text { white-space: pre-wrap; }

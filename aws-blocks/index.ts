@@ -20,9 +20,18 @@ const scope = new Scope('todo-notes-app');
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 const auth = new AuthBasic(scope, 'auth', {
-  passwordPolicy: { minLength: 8 },
+  passwordPolicy: { minLength: 12 },
   crossDomain: process.env.BLOCKS_SANDBOX === 'true',
 });
+
+// Shared demo account: usable for evaluation but hardened — it cannot delete
+// notes, change digest settings, or flood the store (see guards in the API).
+const DEMO_USERNAME = process.env.INSTANOTE_DEMO_USER ?? 'demo@instanote.app';
+const MAX_NOTES_PER_USER = Number(process.env.INSTANOTE_MAX_NOTES ?? 200);
+
+function isDemoUser(username: string) {
+  return username.toLowerCase() === DEMO_USERNAME.toLowerCase();
+}
 export const authApi = auth.createApi();
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -163,13 +172,19 @@ const assistant = new Agent(scope, 'assistant', {
   model: {
     // LocalStack does not emulate Bedrock — fall back to the canned provider
     // there so the assistant still exercises the real SQS -> Lambda path.
-    deployed: isLocalStack ? [{ provider: 'canned' as const }] : BedrockModels.BALANCED,
+    // canned fallback keeps the assistant answering even if Bedrock model
+    // access hasn't been enabled in the target account yet.
+    deployed: isLocalStack
+      ? [{ provider: 'canned' as const }]
+      : [BedrockModels.BALANCED, { provider: 'canned' as const }],
     local: localAssistantModels,
   },
   systemPrompt: [
-    'You are the Notes assistant inside Instanote.',
+    'You are the Notes assistant and daily planner inside Instanote.',
     'You can search the user\'s notes, list what is due soon, create notes,',
     'and mark notes complete. Use searchHelp for questions about the app itself.',
+    'When asked to plan the day, use listDueSoon and propose a numbered,',
+    'priority-ordered plan with overdue items first and a time block per item.',
     'Keep answers short. When summarizing notes, lead with overdue items.',
   ].join(' '),
   streamingMode: 'token',
@@ -246,10 +261,49 @@ const assistant = new Agent(scope, 'assistant', {
   }),
 });
 
+// ─── Quick AI — stateless one-shot tasks (translate, plan) ───────────────────
+// inferenceOnly: no conversation persistence infra. Uses the same provider
+// ladder as the assistant: Bedrock on AWS, Ollama locally if opted in,
+// deterministic canned provider otherwise — so every feature stays testable
+// fully offline.
+const quickAi = new Agent(scope, 'quick-ai', {
+  inferenceOnly: true,
+  model: {
+    deployed: isLocalStack
+      ? [{ provider: 'canned' as const }]
+      : [BedrockModels.FAST, { provider: 'canned' as const }],
+    local: localAssistantModels,
+  },
+  systemPrompt: 'You perform one-shot text tasks precisely. Return only the requested output with no preamble.',
+});
+
+async function runQuickAi(prompt: string): Promise<string> {
+  const result = await quickAi.stream(prompt);
+  const done = await result.complete();
+  return (done.text ?? '').trim();
+}
+
+const LANGUAGES = {
+  french: { name: 'French', pollyVoice: 'Lea', bcp47: 'fr-FR' },
+  german: { name: 'German', pollyVoice: 'Vicki', bcp47: 'de-DE' },
+  hindi: { name: 'Hindi', pollyVoice: 'Kajal', bcp47: 'hi-IN' },
+  english: { name: 'English', pollyVoice: 'Joanna', bcp47: 'en-US' },
+} as const;
+type LanguageKey = keyof typeof LANGUAGES;
+const languageSchema = z.enum(['french', 'german', 'hindi', 'english']);
+
+/** Start/end of "today" for a client at the given UTC offset (minutes). */
+function todayWindow(tzOffsetMinutes: number) {
+  const offsetMs = tzOffsetMinutes * 60 * 1000;
+  const localNow = Date.now() + offsetMs;
+  const dayStartLocal = Math.floor(localNow / DAY_MS) * DAY_MS;
+  return { start: dayStartLocal - offsetMs, end: dayStartLocal + DAY_MS - offsetMs };
+}
+
 // ─── Email digest — CronJob + EmailClient ────────────────────────────────────
 // NOTE for deploy: fromAddress must be a verified SES identity in your account.
 const mailer = new EmailClient(scope, 'digest-mailer', {
-  fromAddress: 'noreply@example.com',
+  fromAddress: process.env.INSTANOTE_FROM_ADDRESS ?? 'noreply@example.com',
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -336,6 +390,12 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async createNote(title: string, body: string = '', tags: string[] = [], dueDate: number = 0) {
     const user = await auth.requireAuth(context);
+    // Resource cap (OWASP A04): bound per-user storage so no account —
+    // especially the shared demo one — can flood the table.
+    const existing = await listNotesFor(user.username);
+    if (existing.length >= MAX_NOTES_PER_USER) {
+      throw new Error(`Note limit reached (${MAX_NOTES_PER_USER}). Delete some notes first.`);
+    }
     return createNoteFor(user.username, { title, body, tags, dueDate });
   },
 
@@ -388,6 +448,10 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async deleteNote(noteId: string) {
     const user = await auth.requireAuth(context);
+    // Demo hardening: visitors share the demo account — keep its seed data.
+    if (isDemoUser(user.username)) {
+      throw new Error('The demo account cannot delete notes — sign up for your own account to try that');
+    }
     await notes.delete({ userId: user.username, noteId });
     await publishNote(user.username, 'deleted', noteId);
     return { success: true };
@@ -403,6 +467,11 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
 
   async updateSettings(email: string, digestEnabled: boolean) {
     const user = await auth.requireAuth(context);
+    // Demo hardening: the shared demo account cannot point the digest at an
+    // arbitrary address (prevents using it to send email to third parties).
+    if (isDemoUser(user.username) && email.toLowerCase() !== user.username.toLowerCase()) {
+      throw new Error('The demo account cannot change its digest email address');
+    }
     const profile = profileSchema.parse({ userId: user.username, email, digestEnabled });
     await profiles.put(profile);
     return profile;
@@ -416,6 +485,97 @@ export const api = new ApiNamespace(scope, 'api', (context) => ({
     if (due.length === 0) return { sent: false as const, reason: 'no-due-notes' as const, count: 0 };
     const result = await mailer.send(buildDigestMessage(profile.email, due));
     return { sent: true as const, count: due.length, messageId: result.messageId };
+  },
+
+  // ── Quick AI: translate · listen · today · daily plan ──
+
+  /** Translate a note to French, German, Hindi, or English via the quick-AI agent. */
+  async translateNote(noteId: string, language: 'french' | 'german' | 'hindi' | 'english') {
+    const user = await auth.requireAuth(context);
+    const lang = LANGUAGES[languageSchema.parse(language)];
+    const note = await notes.get({ userId: user.username, noteId });
+    if (!note) throw new Error('Note not found');
+    const translated = await runQuickAi(
+      `Translate this note to ${lang.name}. Keep the same two-line structure: `
+      + `first line is the title, the rest is the body (may be empty). `
+      + `Return only the translation.\n\nTitle: ${note.title}\nBody: ${note.body || '(empty)'}`,
+    );
+    return { noteId, language, languageName: lang.name, bcp47: lang.bcp47, translated };
+  },
+
+  /**
+   * Synthesize text to MP3 via Amazon Polly (neural voices per language).
+   * Locally without AWS credentials this reports unavailable and the UI
+   * falls back to the browser's built-in speech synthesis.
+   */
+  async synthesizeSpeech(text: string, language: 'french' | 'german' | 'hindi' | 'english' = 'english') {
+    await auth.requireAuth(context);
+    const lang = LANGUAGES[languageSchema.parse(language)];
+    const clipped = z.string().trim().min(1).max(3000).parse(text);
+    try {
+      const { PollyClient, SynthesizeSpeechCommand } = await import('@aws-sdk/client-polly');
+      const polly = new PollyClient({});
+      const out = await polly.send(new SynthesizeSpeechCommand({
+        Text: clipped,
+        OutputFormat: 'mp3',
+        VoiceId: lang.pollyVoice,
+        Engine: 'neural',
+        LanguageCode: lang.bcp47,
+      }));
+      const bytes = await out.AudioStream?.transformToByteArray();
+      if (!bytes?.length) throw new Error('Polly returned no audio');
+      return {
+        available: true as const,
+        format: 'mp3' as const,
+        voice: lang.pollyVoice,
+        bcp47: lang.bcp47,
+        audioBase64: Buffer.from(bytes).toString('base64'),
+      };
+    } catch (e) {
+      // No AWS credentials / Polly unreachable — browser TTS takes over.
+      return { available: false as const, bcp47: lang.bcp47, reason: (e as Error).message };
+    }
+  },
+
+  /** Today's agenda: overdue + due-today incomplete notes, soonest first. */
+  async listToday(tzOffsetMinutes: number = 0) {
+    const user = await auth.requireAuth(context);
+    const offset = z.number().min(-14 * 60).max(14 * 60).parse(tzOffsetMinutes);
+    const { end } = todayWindow(offset);
+    const all = await listNotesFor(user.username);
+    const now = Date.now();
+    return all
+      .filter(n => !n.completed && n.dueDate > 0 && (n.dueDate < now || n.dueDate < end))
+      .sort((a, b) => a.dueDate - b.dueDate)
+      .map(n => ({ ...n, overdue: n.dueDate < now }));
+  },
+
+  /** Daily-planner agent: an ordered, time-blocked plan for today. */
+  async planMyDay(tzOffsetMinutes: number = 0) {
+    const user = await auth.requireAuth(context);
+    const offset = z.number().min(-14 * 60).max(14 * 60).parse(tzOffsetMinutes);
+    const { end } = todayWindow(offset);
+    const all = await listNotesFor(user.username);
+    const now = Date.now();
+    const open = all.filter(n => !n.completed);
+    const overdue = open.filter(n => n.dueDate > 0 && n.dueDate < now);
+    const today = open.filter(n => n.dueDate >= now && n.dueDate < end);
+    const upcoming = open.filter(n => n.dueDate >= end).slice(0, 5);
+    const undated = open.filter(n => n.dueDate === 0).slice(0, 5);
+    const section = (label: string, items: Note[]) =>
+      items.length ? `${label}:\n${items.map(n => `- ${n.title}${n.tags.length ? ` [${n.tags.join(', ')}]` : ''}`).join('\n')}` : '';
+    const inventory = [
+      section('OVERDUE', overdue), section('DUE TODAY', today),
+      section('UPCOMING', upcoming), section('NO DUE DATE', undated),
+    ].filter(Boolean).join('\n\n');
+    if (!inventory) return { plan: 'Nothing on your plate — enjoy the open day, or capture what comes to mind.', noteCount: 0 };
+    const plan = await runQuickAi(
+      'Act as a pragmatic daily planner. From this task inventory, produce a short plan for today: '
+      + 'a numbered list in priority order (overdue first), grouping related tags, '
+      + 'with a suggested time block (morning/afternoon/evening) per item and one closing focus tip. '
+      + `Be concise.\n\n${inventory}`,
+    );
+    return { plan, noteCount: overdue.length + today.length + upcoming.length + undated.length };
   },
 
   // ── Help search (KnowledgeBase directly, no agent) ──

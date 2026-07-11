@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { RemovalPolicies, Mixins, aws_lambda as lambda } from 'aws-cdk-lib';
+import { RemovalPolicies, Mixins, aws_lambda as lambda, aws_iam as iam } from 'aws-cdk-lib';
 
 import { Hosting, BlocksStack, SandboxDisableDeletionProtection } from '@aws-blocks/blocks/cdk';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,15 @@ if (isLocalStack) {
   blocksStack.handler.addEnvironment('LOCALSTACK_DEPLOY', 'true');
 }
 
+// Text-to-speech: the API handler calls Amazon Polly directly (no Block for
+// it yet). SynthesizeSpeech takes no resource-level scoping — '*' is required.
+if (!isLocalStack) {
+  blocksStack.handler.addToRolePolicy(new iam.PolicyStatement({
+    actions: ['polly:SynthesizeSpeech'],
+    resources: ['*'],
+  }));
+}
+
 // Add static site hosting only when deploying (not in sandbox mode).
 // Skipped on LocalStack too: CloudFront is not emulated in community edition.
 if (!sandboxMode && !isLocalStack) {
@@ -70,6 +79,24 @@ if (!sandboxMode && !isLocalStack) {
     root: join(__dirname, '..'),
     buildCommand: 'npm run build',
     buildOutputDir: 'dist',
-    api: blocksStack
+    api: blocksStack,
+    // OWASP hardening at the edge:
+    //  - WAF with per-IP rate limiting (A07 credential stuffing, DoS)
+    //  - strict CSP on every response (A03 XSS, A05 misconfiguration);
+    //    style 'unsafe-inline' is required by lit-html inline styles,
+    //    connect/media allow the API WebSocket + data-URI MP3 playback.
+    waf: { enabled: true, rateLimit: 500 },
+    contentSecurityPolicy: [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "media-src 'self' data: blob:",
+      "connect-src 'self' https://*.execute-api.us-east-1.amazonaws.com wss://*.execute-api.us-east-1.amazonaws.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+    ].join('; '),
   });
 }

@@ -1,0 +1,12 @@
+[project]
+name = "instanote-agentcore"
+version = "0.1.0"
+description = "Instanote agent on the Bedrock AgentCore runtime contract, fully offline (Ollama + local MCP gateway + local memory)"
+requires-python = ">=3.10"
+dependencies = [
+    "bedrock-agentcore",
+    "strands-agents[ollama]",
+    "mcp",
+    "opentelemetry-sdk",
+    "httpx",
+]

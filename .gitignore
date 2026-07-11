@@ -9,3 +9,7 @@ aws-blocks/blocks.spec.json
 .bb-data/
 .env*
 *.log
+agentcore/.venv/
+agentcore/.memory/
+agentcore/__pycache__/
+.demo-credentials
