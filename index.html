@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Instanote helps you catch ideas instantly and find them anywhere." />
+  <meta name="description" content="Instanote is an offline-first AI productivity planner with human-approved agents, daily planning, translation, voice capture, reminders, and AWS serverless deployment." />
   <meta name="theme-color" content="#17233d" />
-  <title>Instanote — Catch ideas instantly. Find them anywhere.</title>
+  <title>Instanote — AI daily planner with human approval</title>
 </head>
 <body>
   <header class="site-header">
@@ -17,18 +17,136 @@
   </header>
 
   <section class="hero" aria-labelledby="page-title">
-    <span class="hero-kicker">Note it now. Keep it close.</span>
-    <h1 id="page-title">Catch ideas instantly.<br /><em>Find them anywhere.</em></h1>
-    <p>A fast, private place for passing thoughts, practical plans, and everything you want to remember next.</p>
+    <div class="hero-copy">
+      <span class="hero-kicker">AWS AI productivity challenge build</span>
+      <h1 id="page-title">Your notes become an AI-planned day.</h1>
+      <p>Instanote captures thoughts, understands due work, translates and reads notes aloud, then drafts a daily plan through a Bedrock-powered assistant that asks before it changes anything.</p>
+      <div class="hero-actions" aria-label="Primary actions">
+        <a class="button button-primary" href="#sign-in-panel">Try demo account</a>
+        <a class="button button-quiet" href="#ai-features">See AI features</a>
+      </div>
+      <dl class="hero-proof" aria-label="Build proof points">
+        <div><dt>26</dt><dd>typed E2E tests</dd></div>
+        <div><dt>3</dt><dd>runtimes: local, LocalStack, AWS</dd></div>
+        <div><dt>0</dt><dd>silent AI writes</dd></div>
+      </dl>
+    </div>
+    <figure class="product-shot" aria-label="Instanote application screenshot preview">
+      <div class="shot-topbar">
+        <span></span><span></span><span></span>
+        <strong>Instanote workbench</strong>
+      </div>
+      <div class="shot-grid">
+        <div class="shot-main">
+          <div class="shot-strip">
+            <div><b>7</b><small>Open</small></div>
+            <div><b>2</b><small>Overdue</small></div>
+            <div><b>3</b><small>Due today</small></div>
+          </div>
+          <div class="shot-card shot-capture">
+            <small>Quick capture</small>
+            <b>Send the launch walkthrough</b>
+            <p>tags: aws, demo · reminder 7:30 PM</p>
+          </div>
+          <div class="shot-card">
+            <small>Today's agenda</small>
+            <b>Record AWS Builder video</b>
+            <p>AI priority: do this before polishing the blog.</p>
+          </div>
+          <div class="shot-card shot-translate">
+            <small>Translation + Polly</small>
+            <b>Hindi audio ready</b>
+            <p>Kajal neural voice reads the translated note.</p>
+          </div>
+        </div>
+        <aside class="shot-ai">
+          <small>Notes assistant</small>
+          <p class="shot-bubble">Plan my day around overdue work first.</p>
+          <p class="shot-bubble ai">Morning: finish demo script. Afternoon: publish blog. Evening: test digest.</p>
+          <div class="shot-approval">
+            <small>Approval needed</small>
+            <b>Create note?</b>
+            <span>Allow</span><span>Decline</span>
+          </div>
+        </aside>
+      </div>
+      <figcaption>Live product surface: planner, approvals, translation, audio, reminders, and realtime notes in one workspace.</figcaption>
+    </figure>
+  </section>
+
+  <section id="ai-features" class="landing-section ai-feature-board" aria-labelledby="ai-title">
+    <div class="landing-heading">
+      <span class="eyebrow">AI/ML productivity loop</span>
+      <h2 id="ai-title">Built to show the model working, not just sitting in a chat box.</h2>
+      <p>The assistant is one part of a broader AI workflow: plan, search, translate, listen, approve, and get a morning digest.</p>
+    </div>
+    <div class="feature-grid">
+      <article>
+        <span>01</span>
+        <h3>Human-approved agent tools</h3>
+        <p>Searches notes freely, but creating or completing notes pauses for explicit approval.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h3>Plan my day</h3>
+        <p>Ranks overdue, due-today, upcoming, and undated notes into a time-blocked plan.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h3>Semantic help search</h3>
+        <p>Bedrock Knowledge Bases retrieve answers from bundled product docs.</p>
+      </article>
+      <article>
+        <span>04</span>
+        <h3>Translation + speech</h3>
+        <p>Quick AI translates notes; Amazon Polly turns them into MP3 audio.</p>
+      </article>
+      <article>
+        <span>05</span>
+        <h3>Voice capture</h3>
+        <p>Browser speech recognition turns spoken thoughts into notes without backend audio upload.</p>
+      </article>
+      <article>
+        <span>06</span>
+        <h3>Daily digest</h3>
+        <p>EventBridge Scheduler and SES deliver a morning brief of due notes and reminders.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="landing-section architecture-showcase" aria-labelledby="architecture-title">
+    <div>
+      <span class="eyebrow">AWS architecture</span>
+      <h2 id="architecture-title">One typed app, three runtimes.</h2>
+      <p>Local mocks make development fast. LocalStack validates the deployment path. AWS runs the production workload with serverless services and Bedrock.</p>
+    </div>
+    <div class="service-map" aria-label="AWS services used">
+      <span>CloudFront + S3</span>
+      <span>API Gateway</span>
+      <span>Lambda</span>
+      <span>DynamoDB</span>
+      <span>SQS</span>
+      <span>Bedrock</span>
+      <span>Polly</span>
+      <span>SES</span>
+      <span>EventBridge</span>
+      <span>WAF + SSM</span>
+    </div>
+  </section>
+
+  <section class="landing-section judge-strip" aria-label="Competition highlights">
+    <article><b>Offline first</b><span>Full app works locally with deterministic AI fallback.</span></article>
+    <article><b>Safe AI</b><span>Backend-owned user context and HITL approvals block cross-user or silent writes.</span></article>
+    <article><b>Showable demo</b><span>Hardened shared account protects seeded notes and caps AI calls.</span></article>
   </section>
 
   <section id="sign-in-panel" class="sign-in-panel">
     <div>
-      <span class="eyebrow">Your private workspace</span>
-      <h2>Sign in to pick up where you left off.</h2>
-      <p>Your notes stay separated by account and sync across open tabs.</p>
+      <span class="eyebrow">Demo-ready workspace</span>
+      <h2>Sign in, click Plan my day, then approve an AI-proposed note.</h2>
+      <p>Use the shared demo credentials during judging, or create your own account. Notes stay isolated by user and sync across open tabs.</p>
     </div>
-    <p id="signInMessage" class="sign-in-note">Use your email and password, or create an account in a few seconds.</p>
+    <p id="signInMessage" class="sign-in-note">Demo account: <strong>demo@instanote.app</strong>. Password shared separately. The demo cannot delete notes or redirect digest email.</p>
   </section>
 
   <main id="app"></main>

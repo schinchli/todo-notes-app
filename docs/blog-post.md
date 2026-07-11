@@ -2,120 +2,145 @@
 
 Tags: #productivity #aws #bedrock #genai
 
-I'm Shashank, a Solutions Architect who spends weekdays drawing architecture diagrams for other people's workloads — so for the AWS Build a Productivity App Weekend Challenge, I wanted to eat my own cooking. The result is **Instanote**: a notes-and-tasks app with an AI daily planner, built under one rule I set before writing a line of code: *the entire app must run on my laptop with zero AWS account, and the exact same code must deploy to AWS with one command.* This post covers the features, but mostly the architecture decisions and trade-offs behind them — because that's where the interesting weekend went.
+I built **Instanote** for the AWS Weekend Productivity Challenge because my notes were doing what notes always do: multiplying quietly and then refusing to tell me what mattered first.
 
-## 🎯 Vision & What the App Does
+Instanote is a notes and tasks app with an AI daily planner, reminders, translation, text-to-speech, voice capture, realtime sync, searchable help, and a daily email digest. The friendly version is: I wanted one place where I could throw ideas during the day, come back in the morning, and ask, "What should I actually do now?"
 
-The problem is one I live with: notes scattered across three apps, tasks with no due dates, and a morning ritual of staring at the pile wondering what to do first. Instanote's answer is one workspace — notes with tags and due dates — plus an AI layer that turns the pile into a plan, under a non-negotiable constraint: **the AI never changes my data without my explicit approval.**
+The important design choice is that the AI is helpful but not sneaky. It can search, summarize, translate, plan, and propose changes. It cannot silently create or complete notes. Any write action pauses and asks me to approve or deny it.
 
-Here's the walkthrough, with why each feature earns its place in *my* day:
+![Instanote AI productivity cockpit](screenshots/landing-page.png)
 
-- **Capture and organize.** Create, search, sort, complete, and delete notes with details, tags, and due dates. Changes sync across open clients in realtime over WebSockets. Payoff: one inbox for my brain instead of three.
-- **🎙️ Voice capture.** Dictate straight into quick capture using the browser's SpeechRecognition API — local-first, so no audio is ever uploaded anywhere. Payoff: I catch ideas while pacing, which is where all my ideas happen.
-- **⏰ Per-note reminders.** Attach a date-time to any note; a dashboard strip surfaces them, browser notifications fire while the app is open, and reminders fold into the 8 AM digest. Payoff: due dates say *what*, reminders say *when to actually start*.
-- **The workbench dashboard.** Open/overdue/due-today/reminder counts plus today's agenda with one-click complete. Payoff: my whole day triaged in one glance, checked off without leaving the strip.
-- **The notes assistant (with approvals).** A chat panel searches my notes, lists what's due in the next seven days, answers how-to questions from bundled help docs — and can *propose* creating or completing a note. Any state-changing tool pauses for an Approve/Deny click. Payoff: I can delegate to the AI without ever wondering what it silently rewrote.
-- **One-click "Plan my day."** The planner gathers my overdue, due-today, upcoming, and undated notes and asks Bedrock for a numbered, priority-ordered plan with a morning/afternoon/evening time block per item, overdue first. Payoff: it kills the what-do-I-do-first paralysis before my coffee cools.
-- **Today's agenda.** A dedicated API returns overdue plus due-today items, soonest first, timezone-aware. Payoff: the glanceable version of the plan when I don't need prose.
-- **Translate any note** to French, German, or Hindi. Payoff: the Hindi translation, read aloud, lets my parents hear a note in their own language.
-- **Listen to notes as MP3.** Amazon Polly neural voices — Léa (French), Vicki (German), Kajal (Hindi), Joanna (English). If Polly is unreachable locally, the browser's speech synthesis takes over. Payoff: notes become audio while I'm making breakfast.
-- **Semantic help search.** Bedrock Knowledge Bases with S3 Vectors indexes the bundled documentation, so "how do digests work?" gets an actual answer. Payoff: the app explains itself; I don't have to.
-- **Daily 8 AM email digest.** EventBridge Scheduler mails every due and overdue item each morning (Asia/Kolkata), with a "send test digest now" button to verify delivery first. Payoff: one calm email replaces my anxiety scroll through the app.
-- **Hardened sharing.** WAF rate limiting, a strict CSP, per-user note caps, per-account daily AI-call limits (the demo account gets 40/day), and a demo account that cannot delete notes or redirect email. Payoff: productivity you can share safely — the demo link below exists because the shared account can't quietly become someone's free LLM proxy.
+The full implementation notes, folder structure, AWS setup, destroy steps, pricing estimate, screenshots, guardrails, and evaluation checklist are in the repository README and wiki: https://github.com/schinchli/todo-notes-app
 
-## 🛠️ How I Built It
+## Vision & What the App Does
 
-The spine of this project is the loop: **built 100% locally first, then pushed to AWS.** Same typed application code, three runtimes, zero rewrites.
+The problem Instanote solves is not "I need another place to type notes." The problem is that capture is easy, but follow-through is hard.
 
-**Stage 1 — laptop only, zero AWS account.** I used AWS Blocks, a new local-first framework (June 2026 preview). You declare typed blocks — `DistributedTable`, `Agent`, `Realtime`, `CronJob`, `EmailClient`, `KnowledgeBase` — and locally they run as persistent mocks: a deterministic canned LLM (or opt-in Ollama for real local inference), TF-IDF search standing in for Bedrock Knowledge Bases, email captured to the console. `npm run dev` gives the *complete* app offline — approvals, realtime, digests, all of it. As an SA I'd call this the biggest architectural win of the stack: the feedback loop for 90% of the build was hot-reload speed, not deploy speed.
+I usually have a mix of half-formed ideas, follow-ups, due dates, reminders, and small tasks that are too important to forget but too scattered to trust. A plain notes app stores them. Instanote tries to move them forward.
 
-**Stage 2 — LocalStack proves the real CDK path.** Mocks validate behavior; they don't validate CloudFormation. So before touching a real account, I deployed the same CDK synthesis to LocalStack to exercise the actual API Gateway, Lambda, DynamoDB, SQS, and SSM paths. Three genuine battles:
+From the user's point of view, Instanote works like this:
 
-- **Change sets hung indefinitely.** LocalStack's change-set execution stalled on this stack. Fix: deploy with `--method=direct` CloudFormation instead.
-- **Custom resources silently no-op'd.** The DynamoDB GSIs that CDK provisions via custom resources never materialized, and neither did runtime configuration. Fix: post-deploy fixup scripts that recreate the GSIs and provision SSM secrets and Blocks config explicitly.
-- **Runtime mismatch.** LocalStack 4.4 predates `nodejs24.x`, so a CDK Aspect downgrades every Lambda to `nodejs22.x` at synth time — gated behind `LOCALSTACK_DEPLOY=true` so real AWS is untouched.
+1. Capture a note with a title, details, tags, due date, and optional reminder.
+2. Use the dashboard to see open work, overdue items, due-today notes, reminders, and today's agenda.
+3. Click **Plan my day** to get a prioritized, time-blocked AI plan.
+4. Ask the assistant to search notes, summarize open work, explain the app, or propose a new note.
+5. Approve or deny any AI-proposed write.
+6. Translate a note and listen to it through text-to-speech.
+7. Turn on the morning digest so due work arrives by email.
 
-Community LocalStack also doesn't emulate Bedrock, SES v2, or CloudFront. Rather than pretend, the app degrades deliberately there (empty help search, surfaced email errors, canned model through the *real* SQS→Lambda agent path), and the e2e suite asserts those documented gaps instead of skipping them — emulator limitations as test assertions, not surprises.
+The AI/ML features are intentionally part of the workflow, not a separate novelty panel. The planner helps decide what to do. The assistant helps operate the notes. Retrieval helps answer questions from the app docs. Translation and speech make the same note usable in more contexts. The digest brings the plan back to the user the next morning.
 
-**Stage 3 — one command to AWS.** `npm run deploy`. Identical application logic, now backed by DynamoDB, Bedrock, Polly, SES, EventBridge Scheduler, and CloudFront.
+For a quick show-and-tell, I would demo this flow: sign in, click **Plan my day**, ask the assistant to create a note, approve the write, translate a note to Hindi, and press **Listen**. That gives a clean view of planning, agentic tool use, human approval, translation, and speech.
 
-**The offline AgentCore experiment.** In `agentcore/` I rebuilt the same agent brain on the Amazon Bedrock AgentCore runtime contract — fully offline. `agent.py` serves the real contract (`POST /invocations`, `GET /ping`) via `BedrockAgentCoreApp`, running a Strands agent on Ollama. `gateway.py` is a local stand-in for AgentCore Gateway: an MCP server over streamable HTTP exposing Instanote's typed API as five tools. `memory.py` provides file-backed short-term events and long-term facts, with OpenTelemetry spans per invocation and a `smoke.py` validator. Promotion path to managed AgentCore: swap the Ollama model for a Bedrock model ID and point at a real Gateway URL — the entrypoint doesn't change.
+## How You Built It
 
-**The later features rode the same loop.** Voice capture never touched the backend at all — it's pure browser SpeechRecognition, which is exactly why no audio leaves the machine. Reminders cut across the stack (note schema, dashboard API, browser notifications, digest builder) and were built and tested entirely against local mocks before redeploying. The per-account AI-call limiter is just one more `DistributedTable` with optimistic-locked counters — a deliberate second layer on top of WAF, because IP rate limiting protects infrastructure while per-account caps protect the *Bedrock bill* from a shared demo login.
+I approached the build as a small solutions architecture exercise, not just a UI sprint.
 
-**Quality gate.** 26 typed end-to-end tests (auth, optimistic-locking CRUD, realtime delivery, digest email, translation, Polly degradation, planner, knowledge retrieval, approval denial, conversation owner-scoping) plus TypeScript checking behind one `npm run check`.
+The rule I set early was: **build locally first, deploy to AWS later, and avoid rewriting the application logic between those two worlds.**
 
-## 🏗️ AWS Services Used / Architecture Overview
+Instanote uses AWS Blocks. In the backend, I define typed blocks such as `DistributedTable`, `Agent`, `Realtime`, `CronJob`, `EmailClient`, and `KnowledgeBase`. Locally, those blocks have persistent local implementations. That means I can run the app on my laptop with local tables, local realtime behavior, local email capture, local help search, and a deterministic assistant.
 
-| Service | Role | Why this choice |
-|---|---|---|
-| Amazon Bedrock — Claude Sonnet | Conversational assistant | Multi-turn tool orchestration needs reasoning quality; Sonnet's balanced profile earns its cost here |
-| Amazon Bedrock — Haiku-class fast model | Quick AI: translate, planner | One-shot, latency-sensitive, high-frequency tasks — pay Haiku prices, get snappy answers |
-| Amazon Polly | Neural TTS, 4 voices | Purpose-built TTS is cheaper and better than pressing an LLM into the job |
-| Bedrock Knowledge Bases + S3 Vectors | Semantic help search | Managed ingestion + retrieval; S3 Vectors keeps vector storage costs trivial at this scale |
-| Lambda + API Gateway | Typed RPC API | Scale-to-zero for a weekend app with spiky traffic |
-| DynamoDB | Notes, profiles, conversations (GSIs for due-date/title sort) | Partition key = userId makes per-user isolation a data-layer guarantee, not a code convention |
-| SQS | Async agent runs | Agent turns outlive API Gateway timeouts; decouple and stream results back |
-| API Gateway WebSockets | Realtime sync | Push, not poll |
-| EventBridge Scheduler | 8 AM digest cron | Native timezone support (Asia/Kolkata) without UTC math |
-| Amazon SES | Digest delivery | Batch send, verified identities |
-| CloudFront + S3 | Static hosting | Cheap, global, TLS by default |
-| AWS WAF + strict CSP | Edge security | See the trade-off note below |
-| SSM Parameter Store | JWT/realtime secrets (SecureString) | No secrets in code, config, or Lambda env |
-| AWS CDK via AWS Blocks | All infrastructure | One typed codebase, three runtimes |
+That local-first approach made the build much more relaxed. I could iterate on notes, reminders, approvals, translation fallback, digest behavior, and the landing page without waiting for cloud deploys.
 
-```
-User ──▶ CloudFront (+WAF, CSP) ──▶ API Gateway ──▶ Lambda
-                                                      ├──▶ DynamoDB (notes/profiles/convos)
-                                                      ├──▶ Bedrock (Sonnet chat · Haiku quick AI)
-                                                      ├──▶ Polly (neural MP3)
-                                                      └──▶ SQS ──▶ Lambda (async agent runs)
-User ◀── API GW WebSockets (realtime sync) ◀──────────┘
-EventBridge Scheduler (8 AM cron) ──▶ Lambda ──▶ SES (digest email)
-```
+After the local loop worked, I used LocalStack as the second stage. LocalStack was useful because it tested a different kind of truth: CDK synthesis, CloudFormation behavior, Lambda packaging, DynamoDB indexes, SQS wiring, SSM configuration, and deployed API paths. Some services are not fully emulated in the community image, especially Bedrock Knowledge Bases, SES v2, CloudFront, and API Gateway WebSockets. Instead of pretending those gaps did not exist, I documented them and made the tests assert the expected fallback behavior.
 
-**Two agents, deliberately.** The conversational assistant carries conversation persistence, a sliding context window, streaming, and HITL interrupt machinery — infrastructure worth paying for in a chat. Translate and plan-my-day need none of it, so they run on a second `inferenceOnly` agent: no persistence tables, no conversation state, just prompt in, text out. Same provider ladder (Bedrock → Ollama → canned), half the moving parts, and a model tier matched to the job — Sonnet where reasoning compounds across turns, Haiku where the task is mechanical and the volume is high. That's most of the Bedrock bill decided in two lines of config.
+The final stage was deploying the same typed app model to AWS. That deployment adds the managed data layer, static hosting, API, WebSockets, async agent path, Bedrock model calls, Polly audio, scheduler, email delivery, WAF, and secure parameters.
 
-**Human-in-the-loop for AI writes.** `addNote` and `completeNote` are declared `needsApproval: true`. Reads are free; writes interrupt and wait. This is an insecure-design control (OWASP A04), not a UX flourish: an LLM with ungated write access is an incident report waiting for a timestamp. Crucially, the tool context derives `userId` from the authenticated session — the model *cannot* name another user, so even prompt injection can't cross a tenant boundary.
+The biggest implementation challenge was not getting the model to say something useful. It was keeping the model in the right box.
 
-**Edge hardening over app-level hardening.** WAF rate limiting (500 req/5 min/IP) and a strict CSP (`frame-ancestors 'none'`, self-only scripts) live at CloudFront — one config block. Rejecting credential-stuffing at the edge means abusive traffic never invokes a Lambda, so the security control doubles as a cost control. App-level checks still exist (Zod validation, size caps, per-user note limits); defence-in-depth just starts where requests are cheapest to reject.
+The main guardrails are:
 
-## 📚 What I Learned
+- the backend derives `userId` from the authenticated session;
+- the model never chooses which user's data to access;
+- tool inputs are validated with Zod schemas;
+- read-only tools can run directly;
+- mutating tools require approval;
+- note writes use optimistic locking;
+- the demo account cannot delete seeded notes or redirect email;
+- AI usage counters limit daily model and speech calls;
+- WAF rate limiting protects the deployed edge.
 
-**Local-first is a genuine speed win, not a demo trick.** Mocks for iteration, LocalStack for infrastructure truth, AWS for reality — each stage caught a different class of bug, and only one stage cost money. The discipline that made it work: encode emulator gaps as explicit test assertions.
+I also added an evaluation path for myself: TypeScript checks, unit tests, end-to-end tests, production build, screenshot generation, and a challenge checklist in the wiki. The goal was to make the project easy to review, not just easy to run.
 
-**Agentic patterns are plumbing you get right once.** Zod schemas give the model a typed tool contract; HITL interrupts make writes safe by construction; sliding-window persistence bounds context cost. None of it is exotic — it's the same input-validation and least-privilege thinking SAs have always preached, applied to a model.
+## AWS Services Used / Architecture Overview
 
-**AgentCore's runtime contract is developable fully offline.** The managed platform's HTTP contract, gateway pattern, and memory model all have faithful local equivalents (Ollama + FastMCP + files). That reframed AgentCore from "cloud service to learn later" into something I prototyped on a Saturday train.
+Instanote uses AWS across hosting, API, data, AI, scheduling, email, security, and configuration.
 
-**Security is cheap when the platform has hooks.** The full OWASP Top 10 mapping (`docs/security.md`) mostly cost configuration, not engineering — which is exactly how it should be.
+| AWS service | How Instanote uses it |
+|---|---|
+| Amazon CloudFront | Static frontend delivery and edge security headers |
+| Amazon S3 | Static assets and knowledge-base source documents |
+| AWS WAF | Per-IP rate limiting |
+| Amazon API Gateway HTTP API | Typed application API |
+| Amazon API Gateway WebSockets | Realtime note and assistant events |
+| AWS Lambda | API handlers, digest logic, async agent workers |
+| Amazon DynamoDB | Notes, profiles, conversations, and AI usage counters |
+| Amazon SQS | Async assistant execution path |
+| Amazon Bedrock | Assistant and quick AI tasks |
+| Bedrock Knowledge Bases + S3 Vectors | Help-document retrieval |
+| Amazon Polly | Neural text-to-speech |
+| Amazon EventBridge Scheduler | Daily digest schedule |
+| Amazon SES | Digest email delivery |
+| AWS Systems Manager Parameter Store | Secure runtime parameters |
+| AWS CDK through AWS Blocks | Infrastructure as code |
 
-## 💰 What It Costs to Run (and How to Tear It Down)
+Architecture overview:
 
-Judges (and weekend builders) deserve real numbers, so I verified every figure against the AWS pricing pages in July 2026. For light personal use — a few users, ~30 assistant conversations, ~100 quick-AI calls, ~100 Polly reads a month — Instanote lands at **roughly $9–14/month** (~$12 typical).
+```text
+Browser
+  │
+  ▼
+CloudFront + S3 + WAF
+  │
+  ▼
+API Gateway HTTP API ──▶ Lambda ──▶ DynamoDB
+                         │   │
+                         │   ├──▶ Amazon Bedrock
+                         │   ├──▶ Amazon Polly
+                         │   ├──▶ Bedrock Knowledge Bases
+                         │   └──▶ SQS ──▶ Agent worker Lambda
+                         │
+Browser ◀── API Gateway WebSockets ◀── Realtime events
 
-The top three drivers tell the story: **AWS WAF's fixed fee (~$6/month — half the bill)**, **Bedrock tokens (~$2.50–3.50)**, and **Polly neural (~$2.40, free for year one under the 1M-chars/month tier)**. Everything else — Lambda, CloudFront, EventBridge Scheduler, DynamoDB storage, SES — sits inside always-free allowances at this scale. New AWS accounts get the credit-based Free Plan ($100 sign-up + $100 onboarding = $200, valid 6 months), which absorbs the whole thing. And because the stack is fully serverless, **at idle the bill collapses to basically the WAF fee** plus pennies of storage.
-
-When the weekend is over, teardown is honest too:
-
-```bash
-npm run destroy                      # tears down the production stack
-# RETAIN-ed resources survive on purpose — delete manually:
-aws s3 rb s3://<kb-data-bucket> --force        # KnowledgeBase data bucket
-aws s3vectors list-vector-buckets              # then delete index + vector bucket
-aws cloudformation delete-stack --stack-name CDKToolkit   # optional, if nothing else uses CDK
-./scripts/localstack.sh down         # local leftovers
+EventBridge Scheduler ──▶ Digest Lambda ──▶ Amazon SES
 ```
 
-The full worksheet — line-by-line estimates, free-tier notes, and a Well-Architected cross-check — lives in `docs/pricing-and-cleanup.md`.
+There are two AI paths. The conversational assistant uses the full agent path: tool calling, streaming, conversation persistence, and approval interrupts. The quick AI path handles focused tasks like translation and daily planning without carrying long-lived conversation state.
 
-## 🔗 Try It / Links
+For light personal use, my estimate is roughly **$9-14/month**, with the main drivers being WAF, Bedrock tokens, and Polly neural speech. The repo wiki has the implementation guide, pricing notes, and destroy steps so a reviewer can reproduce or clean up the stack safely.
 
-- **Source & full architecture:** https://github.com/schinchli/todo-notes-app — a public repo with all the code: the CDK/AWS Blocks stack, the offline AgentCore experiment, `docs/security.md` (OWASP Top 10 mapping), and `docs/pricing-and-cleanup.md`. Clone it and `npm run dev` runs the entire app on your laptop with **zero AWS account**.
-- **Run it yourself:** `npx cdk bootstrap && npm run deploy` stands up the identical stack in your own account (the demo account seeds with `node scripts/seed-demo.mjs`); `npm run destroy` takes it back to zero.
+## What You Learned
 
-🎬 **Video walkthrough:** coming soon — the app is camera-ready, the narrator (me) is still negotiating with his own calendar. Ironically, Instanote just scheduled the recording as an overdue note.
+The biggest thing I learned is that local-first cloud development is not just convenient; it changes the emotional pace of building. When the app works locally with realistic mocks, cloud deployment becomes a validation step instead of the first moment the product feels real.
 
-The thirty-second loop that made me build this: hit "Plan my day," approve the note the assistant proposes, and let Kajal read it back in Hindi.
+I also learned that small AI features can feel more useful than one giant assistant. A daily plan, a safe proposed write, a translation, a spoken note, and a morning digest each solve one practical problem. Together, they make the app feel like a real productivity companion.
 
-<!-- Word count: ~1,950 words of prose (2,373 total by wc -w, including tables, code blocks, and diagram markup) -->
+Another lesson was that guardrails need to be product features, not just backend rules. The approval card matters because the user can see the boundary. The demo account restrictions matter because judges can safely explore the app. The AI call limits matter because a shared demo should not become an open-ended model bill.
+
+Finally, I learned that documentation is part of the product. The README explains the project, the wiki explains how to implement and destroy it, and the article tells the story. That separation made the submission easier to read and easier to evaluate.
+
+## Link to App or Repo
+
+- **Public source repository:** https://github.com/schinchli/todo-notes-app
+
+The README is the best next stop. It links to the wiki pages for implementation in an AWS account, cleanup/destroy steps, pricing, evaluation checks, screenshots, guardrails, and project structure.
+
+<!--
+Validation pass 1 — challenge format:
+- Title contains "Weekend Productivity Challenge: Instanote".
+- Tag line includes "productivity".
+- Required sections present:
+  1. Vision & What the App Does
+  2. How You Built It
+  3. AWS Services Used / Architecture Overview
+  4. What You Learned
+  5. Link to App or Repo
+- Word count is above 500.
+- Repo link included.
+
+Validation pass 2 — eligibility:
+- Personal AI-powered productivity tool: yes.
+- AWS services clearly listed: yes.
+- Working functionality demonstrated via screenshots and public repo: yes.
+- Publish between July 10, 2026 9:00 AM PT and July 13, 2026 1:00 PM PT.
+-->

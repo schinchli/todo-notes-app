@@ -1,49 +1,188 @@
 # Instanote
 
-**Catch ideas instantly. Find them anywhere.**
+**Catch ideas quickly. Let AI help plan the day. Keep every write under human control.**
 
-Instanote is a local-first notes application built with AWS Blocks. It combines structured notes, tags, due dates, realtime updates, a daily email digest, searchable help, and an approval-aware AI assistant in one responsive workspace.
+Instanote is an offline-first AI productivity app built for the AWS Weekend Productivity Challenge. It is a notes and tasks workspace with due dates, reminders, realtime sync, voice capture, daily planning, translation, text-to-speech, searchable help, email digests, and an approval-aware assistant.
 
-The same typed application code runs against local mocks, a LocalStack deployment, or managed AWS services. Local development does not require an AWS account.
+The project is designed to be easy to judge and easy to reproduce:
 
-## What it does
+- the app works locally without an AWS account;
+- the same typed application model deploys to LocalStack or AWS;
+- the assistant can help, but it cannot silently change user data;
+- the repo includes screenshots, architecture notes, pricing notes, security notes, and wiki-style implementation guides.
 
-- Create, search, sort, complete, and delete notes.
-- Add details, tags, and due dates to each note.
-- Keep each account's notes and settings isolated.
-- Synchronize note changes across open clients when realtime transport is available.
-- Ask an assistant to search notes, list upcoming work, or explain the app.
-- Require explicit approval before the assistant creates or completes a note.
-- Search bundled help content through a knowledge base.
-- Send an optional 8:00 AM Asia/Kolkata digest of due and overdue notes.
-- Send an on-demand test digest from settings before enabling the daily schedule.
-- Run locally, deploy to LocalStack, or deploy to AWS without changing application logic.
+![Instanote AI productivity cockpit](docs/screenshots/landing-page.png)
 
-## Technology
+## Friendly Overview
 
-| Layer | Implementation |
+The everyday problem is familiar: notes pile up faster than they turn into action. Instanote gives the user one place to capture ideas, tag them, add due dates and reminders, then ask AI to turn the pile into a practical daily plan.
+
+The product is intentionally not "just a chatbot." The AI sits inside the productivity workflow:
+
+- it can search the user's own notes;
+- it can list what is due soon;
+- it can explain the app using bundled help docs;
+- it can plan the day from overdue, due-today, upcoming, and undated notes;
+- it can translate notes;
+- it can help turn notes into audio;
+- it can propose creating or completing notes;
+- it must ask for approval before making state-changing edits.
+
+That final point is the heart of the design. Instanote treats AI as a helpful teammate, not an invisible owner of the data.
+
+## What We Built
+
+User-facing features:
+
+- Notes with title, details, tags, due date, reminder time, completion state, and optimistic locking.
+- Dashboard showing open notes, overdue items, due-today work, reminders, and today's agenda.
+- Voice capture using browser speech recognition.
+- Realtime note updates across open clients when realtime transport is available.
+- Daily planner powered by the quick AI path.
+- Chat assistant with typed tools and human approval for writes.
+- Semantic help search over bundled documentation.
+- Translation to French, German, Hindi, and English.
+- Text-to-speech with Amazon Polly on AWS and browser speech fallback locally.
+- Optional daily 8:00 AM Asia/Kolkata digest through email.
+- Hardened demo account protections.
+
+Show-and-tell flow:
+
+1. Open the landing page and point out the AI productivity cockpit.
+2. Sign in with the demo account credentials shared separately.
+3. Click **Plan my day**.
+4. Ask the assistant to create a note.
+5. Approve the proposed write.
+6. Translate a note to Hindi.
+7. Play it through text-to-speech.
+8. Send a test digest.
+
+## AI/ML Features
+
+| Feature | What it demonstrates | Runtime path |
+|---|---|---|
+| Notes assistant | Tool use, conversation memory, streaming, retrieval, safe writes | AWS Blocks `Agent`, SQS, Lambda, Amazon Bedrock on AWS |
+| Human approval | Guardrail for state-changing AI actions | `needsApproval: true` on mutating tools |
+| Plan my day | AI prioritization and time-blocked productivity planning | Stateless quick AI agent |
+| Translation | Single-shot language transformation | Quick AI path |
+| Text-to-speech | Audio output for notes and translations | Amazon Polly, browser fallback locally |
+| Help search | Retrieval over app docs | `KnowledgeBase`, local TF-IDF, Bedrock Knowledge Bases on AWS |
+| Voice capture | Speech-to-note workflow | Browser SpeechRecognition, no backend audio upload |
+| Daily digest | Scheduled productivity summary | EventBridge Scheduler + EmailClient/SES |
+
+## Approach
+
+The approach is documented in [docs/approach.md](docs/approach.md).
+
+Short version:
+
+1. Build the full app locally first.
+2. Use deterministic local mocks so development does not require AWS credentials.
+3. Validate infrastructure behavior with LocalStack.
+4. Deploy the same application model to AWS.
+5. Add guardrails around identity, tool calls, usage, and demo-account behavior.
+6. Polish the landing page and docs so the AI/ML story is obvious during judging.
+
+## Guardrails And Evals
+
+Guardrails:
+
+- Backend-owned identity: the model never supplies `userId`.
+- Zod schemas validate API inputs and tool parameters.
+- Mutating assistant tools require human approval.
+- DynamoDB partition keys isolate user data.
+- Note writes use optimistic locking.
+- Per-user note caps bound storage growth.
+- Per-account AI call limits bound model and speech spend.
+- Demo account cannot delete seeded notes or redirect digest email.
+- WAF rate limiting protects the deployed edge.
+- Secrets are stored outside source code.
+
+Validation and evals:
+
+- `npm run typecheck` validates TypeScript.
+- `npm run test:unit` covers pure note-domain logic.
+- `npm run test:e2e` exercises auth, CRUD, isolation, realtime, digest, help search, assistant conversations, approvals, translation, and fallbacks.
+- `npm run build` validates the production frontend bundle.
+- `npm run check` runs the full local quality gate.
+- Playwright screenshot checks verify the landing page and show-and-tell screens.
+
+## AWS Services Used
+
+| AWS service | Role |
 |---|---|
-| Frontend | TypeScript, Vite, Lit HTML |
-| API | AWS Blocks `ApiNamespace` typed RPC |
-| Authentication | `AuthBasic` |
-| Data | `DistributedTable` / DynamoDB |
-| Realtime | `Realtime` / API Gateway WebSocket |
-| Assistant | `Agent`, local canned/Ollama provider, Amazon Bedrock on AWS |
-| Help search | `KnowledgeBase`, local TF-IDF, Bedrock Knowledge Bases on AWS |
-| Scheduling | `CronJob` / EventBridge Scheduler |
-| Email | `EmailClient` / Amazon SES |
-| Infrastructure | AWS CDK through AWS Blocks |
-| Testing | Node test runner and typed end-to-end API tests |
+| Amazon CloudFront | Static app delivery and edge response headers |
+| Amazon S3 | Static frontend assets and knowledge-base source documents |
+| AWS WAF | Per-IP rate limiting at the edge |
+| Amazon API Gateway HTTP API | Typed application API |
+| Amazon API Gateway WebSockets | Realtime note and assistant events |
+| AWS Lambda | API handlers, digest logic, async agent workers |
+| Amazon DynamoDB | Notes, profiles, conversations, AI usage counters |
+| Amazon SQS | Async agent execution path |
+| Amazon Bedrock | Assistant and quick AI model calls |
+| Bedrock Knowledge Bases + S3 Vectors | Semantic help retrieval |
+| Amazon Polly | Neural text-to-speech |
+| Amazon EventBridge Scheduler | Daily digest schedule |
+| Amazon SES | Digest email delivery |
+| AWS Systems Manager Parameter Store | Secure runtime parameters |
+| AWS CDK through AWS Blocks | Infrastructure as code |
 
-## Requirements
+Architecture sketch:
 
-- Node.js 22 or newer
-- npm
-- Docker for LocalStack testing
-- AWS credentials only for sandbox or production AWS deployments
-- Optional: Ollama and a tool-capable local model for richer offline responses
+```text
+Browser
+  │
+  ▼
+CloudFront + S3 + WAF
+  │
+  ▼
+API Gateway HTTP API ──▶ Lambda ──▶ DynamoDB
+                         │   │
+                         │   ├──▶ Amazon Bedrock
+                         │   ├──▶ Amazon Polly
+                         │   ├──▶ Bedrock Knowledge Bases
+                         │   └──▶ SQS ──▶ Agent worker Lambda
+                         │
+Browser ◀── API Gateway WebSockets ◀── Realtime events
 
-## Quick start
+EventBridge Scheduler ──▶ Digest Lambda ──▶ Amazon SES
+```
+
+## Project Structure
+
+```text
+.
+├── agentcore/                 # Offline AgentCore runtime experiment
+├── aws-blocks/                # Backend blocks, CDK stack, Lambda adapter, scripts
+│   ├── index.ts               # API, schemas, tools, agents, jobs
+│   ├── index.cdk.ts           # AWS and LocalStack infrastructure adjustments
+│   └── scripts/               # dev, deploy, destroy, sandbox lifecycle
+├── docs/
+│   ├── wiki/                  # Implementation, deployment, destroy, pricing guides
+│   ├── screenshots/           # Landing and feature screenshots
+│   ├── approach.md            # Product and architecture approach note
+│   ├── architecture.md        # Execution flows and data boundaries
+│   ├── assistant.md           # Assistant runtimes and AgentCore clarification
+│   ├── blog-post.md           # Challenge article draft
+│   ├── deployment.md          # Deployment checklist
+│   ├── localstack.md          # LocalStack workflow and limitations
+│   ├── pricing-and-cleanup.md # Cost estimate and cleanup notes
+│   └── security.md            # OWASP mapping and guardrails
+├── knowledge/                 # User help docs indexed by KnowledgeBase
+├── scripts/                   # LocalStack fixups, demo seed, screenshots
+├── src/
+│   ├── domain/notes.ts        # Note filtering and due-date domain logic
+│   ├── main.ts                # Browser UI and client-side interactions
+│   └── styles/app.css         # Responsive visual design
+├── test/                      # Unit and typed E2E tests
+├── index.html                 # Landing page and app shell
+├── package.json
+└── cdk.json
+```
+
+Generated folders such as `dist/`, `build-temp/`, `.hosting/`, `cdk.out/`, `.bb-data/`, `.blocks-sandbox/`, and `node_modules/` are not source.
+
+## How To Run Locally
 
 ```bash
 git clone https://github.com/schinchli/todo-notes-app.git
@@ -52,13 +191,11 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open the local URL printed by the dev server.
 
-Local state is stored under `.bb-data/` and is intentionally excluded from Git. The assistant status badge shows its active runtime. The built-in deterministic provider works immediately, stays offline, and keeps agent tools and approvals testable without an external model.
+Local state is stored under `.bb-data/`. The default assistant is deterministic and offline, so the core tool and approval flow works without external model access.
 
-### Offline Notes assistant
-
-For richer local responses, install and start Ollama, pull a tool-capable model, and opt in when starting Instanote:
+Optional Ollama runtime:
 
 ```bash
 ollama serve
@@ -66,141 +203,29 @@ ollama pull qwen3:0.6b
 INSTANOTE_OLLAMA_MODEL=qwen3:0.6b npm run dev
 ```
 
-The assistant panel should display `Offline · qwen3:0.6b`. It can chat, search notes, list due items, and propose note changes without AWS credentials or internet access. Creating or completing notes still requires your approval. Model capability varies; keep the built-in default for deterministic development and CI.
+## Wiki
 
-Amazon Bedrock AgentCore's local development server reproduces the AgentCore runtime contract, but model inference is only offline when it is paired with a local provider such as Ollama. Instanote uses AWS Blocks' Strands-based Agent locally and Amazon Bedrock when deployed. See [assistant runtimes](docs/assistant.md).
+Implementation and operations are in the wiki-style docs:
 
-## Validation
+- [Wiki home](docs/wiki/Home.md)
+- [How to implement in an AWS account](docs/wiki/Implement-in-AWS.md)
+- [How to destroy and clean up](docs/wiki/Destroy-and-Cleanup.md)
+- [Pricing estimate](docs/wiki/Pricing.md)
+- [Evaluation checklist](docs/wiki/Evaluation-Checklist.md)
 
-Run the complete local quality gate:
-
-```bash
-npm run check
-```
-
-This command runs TypeScript checking, domain unit tests, a production frontend build, and the full typed end-to-end suite, including realtime delivery, digest email, knowledge retrieval, and assistant conversations.
-
-Useful individual commands:
-
-| Command | Purpose |
-|---|---|
-| `npm run dev` | Start the local backend and Vite frontend |
-| `npm run typecheck` | Validate TypeScript without emitting files |
-| `npm run test:unit` | Run pure note-domain tests |
-| `npm run test:e2e` | Exercise auth, data, settings, help, and assistant APIs |
-| `npm run build` | Build the production frontend |
-| `npm run check` | Run every local validation step |
-| `npm run spec` | Regenerate the AWS Blocks API specification |
-
-## LocalStack
-
-LocalStack exercises the actual CDK, CloudFormation, API Gateway, Lambda, DynamoDB, SQS, S3, SSM, Scheduler, and SES paths without using an AWS account.
-
-```bash
-./scripts/localstack.sh up
-./scripts/localstack.sh bootstrap
-./scripts/localstack.sh deploy
-npm run test:e2e
-./scripts/localstack.sh status
-```
-
-The deploy command temporarily points `.blocks-sandbox/config.json` at the LocalStack API. Restore local development afterward:
-
-```json
-{
-  "apiUrl": "http://localhost:3000/aws-blocks/api",
-  "environment": "local"
-}
-```
-
-Community LocalStack does not emulate Bedrock Knowledge Bases, SES v2, CloudFront hosting, or API Gateway WebSockets completely. The app intentionally degrades help search to an empty result, exposes the digest send error, and treats realtime publishing as best-effort in this environment. See [LocalStack details](docs/localstack.md).
-
-## AWS deployment
-
-Bootstrap the target account and region once:
-
-```bash
-npx cdk bootstrap aws://ACCOUNT_ID/REGION
-```
-
-Then choose a deployment mode:
-
-```bash
-npm run sandbox     # AWS backend with frontend served locally
-npm run deploy      # production stack including static hosting
-```
-
-Destroy temporary or production resources with `npm run sandbox:destroy` or `npm run destroy`.
-
-Before production deployment:
-
-1. Replace `noreply@example.com` in `aws-blocks/index.ts` with a verified SES identity.
-2. Request SES production access if recipients should not be restricted to verified identities.
-3. Enable access to the configured Bedrock model and verify its availability in the target region.
-4. Prefer `AuthCognito` or `AuthOIDC` when MFA, federation, social login, or enterprise identity is required.
-5. Run `npm run check`, deploy to a sandbox, and smoke-test auth, assistant approvals, realtime behavior, and digest delivery.
-
-See the full [deployment guide](docs/deployment.md).
-
-## Repository layout
-
-```text
-.
-├── aws-blocks/
-│   ├── index.ts              # Backend blocks, schemas, tools, jobs, and typed API
-│   ├── index.cdk.ts          # CDK stack and LocalStack compatibility adjustments
-│   ├── index.handler.ts      # Lambda adapter
-│   └── scripts/              # AWS Blocks lifecycle entry points
-├── docs/
-│   ├── architecture.md       # Components, boundaries, data, and request flows
-│   ├── assistant.md          # Offline, LocalStack, Bedrock, and AgentCore runtimes
-│   ├── deployment.md         # AWS sandbox and production operations
-│   ├── development.md        # Local workflow, conventions, and quality gates
-│   └── localstack.md         # LocalStack workflow and parity notes
-├── knowledge/                # Source documents indexed by KnowledgeBase
-├── scripts/
-│   ├── localstack.sh         # LocalStack lifecycle and parity fixups
-│   └── fix-localstack-gsis.py
-├── src/
-│   ├── domain/notes.ts       # Note types, filtering, due dates, and summary logic
-│   ├── styles/app.css        # Responsive design system and component styling
-│   └── main.ts               # Browser UI, auth shell, notes, settings, and assistant
-├── test/
-│   ├── domain.test.ts        # Pure domain unit tests
-│   └── e2e.test.ts           # Typed API end-to-end tests
-├── index.html                # Accessible HTML shell
-├── package.json              # Scripts and dependencies
-└── cdk.json                  # CDK application configuration
-```
-
-Generated folders such as `dist/`, `build-temp/`, `.hosting/`, `cdk.out/`, `.bb-data/`, and `.blocks-sandbox/` are not source and are excluded from version control.
-
-## Architecture and security
-
-Every public API method calls `auth.requireAuth` before accessing user data. DynamoDB partition keys use the authenticated username, note writes use optimistic locking, and assistant conversation reads/writes verify ownership. Agent tools receive the authenticated user ID through validated tool context, and tools that modify state require approval.
-
-Inputs are validated at the API boundary for note length, tag limits, due dates, digest email addresses, and assistant message size. Realtime publication is intentionally non-blocking so transport outages cannot roll back successful writes.
-
-For diagrams and detailed execution flows, read [architecture.md](docs/architecture.md).
+The challenge article intentionally points readers back here instead of trying to carry every command in the article body.
 
 ## Documentation
 
+- [Approach note](docs/approach.md)
 - [Architecture](docs/architecture.md)
-- [Assistant runtimes and offline setup](docs/assistant.md)
+- [Assistant runtimes](docs/assistant.md)
+- [Challenge article draft](docs/blog-post.md)
+- [Deployment checklist](docs/deployment.md)
 - [Development workflow](docs/development.md)
-- [Deployment and production checklist](docs/deployment.md)
-- [LocalStack workflow and limitations](docs/localstack.md)
-- [User getting started guide](knowledge/getting-started.md)
-- [User FAQ](knowledge/faq.md)
-
-## Common troubleshooting
-
-- Port 3000 is already in use: run `npm run cleanup`, then restart development.
-- Tests target the wrong backend: inspect `.blocks-sandbox/config.json` and restore the local URL shown above.
-- Local assistant responses are intentionally concise by default: configure `INSTANOTE_OLLAMA_MODEL` for richer responses from a tool-capable Ollama model.
-- LocalStack help search returns no results: Bedrock Knowledge Bases are not emulated; this is expected.
-- Production email fails: verify the configured SES identity and confirm the account is out of the SES sandbox.
-- Production help search is initially empty: knowledge base ingestion is asynchronous; wait for synchronization before testing retrieval.
+- [LocalStack details](docs/localstack.md)
+- [Pricing and cleanup](docs/pricing-and-cleanup.md)
+- [Security and OWASP mapping](docs/security.md)
 
 ## License
 

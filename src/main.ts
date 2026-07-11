@@ -564,7 +564,8 @@ document.getElementById('app')!.appendChild(
       await runAction(async () => {
         const tags = [...new Set(draft.tags.split(',').map(tag => tag.trim()).filter(Boolean))];
         const dueDate = draft.due ? new Date(`${draft.due}T12:00:00`).getTime() : 0;
-        await api.createNote(title, draft.body.trim(), tags, dueDate);
+        const reminderAt = draft.reminder ? new Date(draft.reminder).getTime() : 0;
+        await api.createNote(title, draft.body.trim(), tags, dueDate, reminderAt);
         draft = { title: '', body: '', tags: '', due: '', reminder: '' };
         await load();
         showToast('Note added');
