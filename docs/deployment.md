@@ -41,7 +41,14 @@ Replace `noreply@example.com` with a verified identity. Verify the domain or add
 
 ### Bedrock
 
-Enable the configured model and verify regional availability. Knowledge base ingestion happens asynchronously; wait for synchronization before validating search.
+Enable the configured Bedrock inference profiles and verify account access:
+
+- assistant: `global.anthropic.claude-sonnet-4-6`
+- quick AI: `global.anthropic.claude-haiku-4-5-20251001-v1:0`
+
+The current app deployment is written and tested for `us-east-1`. The Bedrock presets are global inference profiles, so Bedrock may route inference to supported regions behind the profile. If you need region-scoped inference for data residency, replace the presets in `aws-blocks/index.ts` and update the deployment region assumptions.
+
+Knowledge base ingestion happens asynchronously; wait for synchronization before validating search.
 
 ### Authentication
 

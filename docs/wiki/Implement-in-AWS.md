@@ -9,7 +9,7 @@ This guide shows the path from local development to AWS deployment.
 - AWS CLI configured for the target account
 - AWS CDK bootstrap permission
 - SES sender identity you can verify
-- Access to the configured Amazon Bedrock model in your target region
+- Access to the configured Amazon Bedrock inference profiles
 - Optional: Docker for LocalStack validation
 - Optional: Ollama for richer local offline assistant responses
 
@@ -77,9 +77,17 @@ Before production deployment:
 
 1. Verify an SES sender identity.
 2. Replace or set `INSTANOTE_FROM_ADDRESS` with that verified identity.
-3. Enable the configured Bedrock model in your region.
+3. Enable the configured Bedrock models/inference profiles:
+   - assistant: `global.anthropic.claude-sonnet-4-6`
+   - quick AI: `global.anthropic.claude-haiku-4-5-20251001-v1:0`
 4. Confirm whether WAF fixed monthly cost is acceptable.
 5. Decide whether `AuthBasic` is enough or whether to migrate to Cognito/OIDC.
+
+## Region
+
+The project is currently written and tested for **`us-east-1`**. The production hosting setup uses CloudFront + WAF, and the CSP in `aws-blocks/index.cdk.ts` currently allows API Gateway endpoints in `us-east-1`.
+
+The Bedrock presets use global inference profiles. That means Bedrock may route inference to supported regions behind the profile. If your workload has strict data residency requirements, replace the presets with region-scoped model/profile IDs and update the deployment documentation accordingly.
 
 ## 7. Bootstrap CDK
 
@@ -87,7 +95,7 @@ Before production deployment:
 npx cdk bootstrap aws://ACCOUNT_ID/REGION
 ```
 
-Use your target account ID and region.
+Use your target account ID and `us-east-1` unless you have reviewed and updated the region-specific CSP and hosting assumptions.
 
 ## 8. Deploy
 

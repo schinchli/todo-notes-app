@@ -1,5 +1,7 @@
 # Architecture
 
+![Instanote AWS architecture](architecture-diagram.svg)
+
 ## System overview
 
 Instanote is a single AWS Blocks application. The browser imports a generated typed client, while the backend composes infrastructure-aware blocks inside one scope.

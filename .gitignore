@@ -9,6 +9,7 @@ aws-blocks/blocks.spec.json
 .bb-data/
 .env*
 *.log
+.DS_Store
 agentcore/.venv/
 agentcore/.memory/
 agentcore/__pycache__/

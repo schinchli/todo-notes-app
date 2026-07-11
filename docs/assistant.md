@@ -10,6 +10,18 @@ The right-hand Notes assistant uses the AWS Blocks `Agent`, which is powered by 
 | LocalStack | SQS and Lambda through LocalStack | Canned provider because Bedrock is not emulated |
 | AWS | SQS, Lambda, persistence, and realtime AWS resources | Amazon Bedrock balanced global inference profile |
 
+## Deployed Bedrock models
+
+Instanote uses AWS Blocks Bedrock model presets when deployed:
+
+| App path | Preset | Inference profile |
+|---|---|---|
+| Conversational assistant | `BedrockModels.BALANCED` | `global.anthropic.claude-sonnet-4-6` |
+| Quick AI planning and translation | `BedrockModels.FAST` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+
+These are global inference profiles. For data residency requirements, replace
+them with region-scoped model/profile IDs.
+
 The UI calls `getAssistantStatus` after sign-in and displays the configured provider. Provider detection never sends note data; when Ollama is enabled it only checks Ollama's local model list.
 
 ## Built-in offline setup

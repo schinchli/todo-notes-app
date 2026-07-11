@@ -1,8 +1,8 @@
-# Instanote
+# Instanote — From Scattered Notes to a Calm, AI-Planned Day
 
-**Catch ideas quickly. Let AI help plan the day. Keep every write under human control.**
+**An AI-powered productivity workspace for notes, reminders, daily planning, translation, speech, and human-approved assistant actions.**
 
-Instanote is an offline-first AI productivity app built for the AWS Weekend Productivity Challenge. It is a notes and tasks workspace with due dates, reminders, realtime sync, voice capture, daily planning, translation, text-to-speech, searchable help, email digests, and an approval-aware assistant.
+Instanote turns scattered notes, reminders, and due dates into a clear daily plan. It uses AI to prioritize the day, search and summarize notes, answer help questions through retrieval, translate notes, and prepare content for text-to-speech. The assistant can propose creating or completing notes, but every state-changing action pauses for an explicit Approve or Deny, so the AI helps without quietly taking control.
 
 The project is designed to be easy to judge and easy to reproduce:
 
@@ -12,6 +12,10 @@ The project is designed to be easy to judge and easy to reproduce:
 - the repo includes screenshots, architecture notes, pricing notes, security notes, and wiki-style implementation guides.
 
 ![Instanote AI productivity cockpit](docs/screenshots/landing-page.png)
+
+## AWS Architecture
+
+![Instanote AWS architecture](docs/architecture-diagram.svg)
 
 ## Friendly Overview
 
@@ -70,6 +74,17 @@ Show-and-tell flow:
 | Voice capture | Speech-to-note workflow | Browser SpeechRecognition, no backend audio upload |
 | Daily digest | Scheduled productivity summary | EventBridge Scheduler + EmailClient/SES |
 
+### Bedrock Models And Region
+
+The deployed app uses AWS Blocks Bedrock model presets:
+
+| Workload | AWS Blocks preset | Bedrock inference profile |
+|---|---|---|
+| Conversational notes assistant | `BedrockModels.BALANCED` | `global.anthropic.claude-sonnet-4-6` |
+| Quick AI for planning and translation | `BedrockModels.FAST` | `global.anthropic.claude-haiku-4-5-20251001-v1:0` |
+
+These are **global inference profiles**, so Bedrock may route inference to supported regions for availability and throughput. The app stack is currently written and tested for **`us-east-1`** because the CloudFront/WAF hosting setup and API Gateway CSP are configured around that region. If you deploy elsewhere, update the CSP in `aws-blocks/index.cdk.ts` and confirm Bedrock model/profile availability for that account and region.
+
 ## Approach
 
 The approach is documented in [docs/approach.md](docs/approach.md).
@@ -105,7 +120,7 @@ Validation and evals:
 - `npm run test:e2e` exercises auth, CRUD, isolation, realtime, digest, help search, assistant conversations, approvals, translation, and fallbacks.
 - `npm run build` validates the production frontend bundle.
 - `npm run check` runs the full local quality gate.
-- Playwright screenshot checks verify the landing page and show-and-tell screens.
+- Playwright screenshot tooling covers the landing page and show-and-tell screens: workbench, Plan my day, translation, and voice capture. It is used for visual documentation and demo verification, while the typed E2E suite covers API behavior.
 
 ## AWS Services Used
 
@@ -160,6 +175,7 @@ EventBridge Scheduler ──▶ Digest Lambda ──▶ Amazon SES
 ├── docs/
 │   ├── wiki/                  # Implementation, deployment, destroy, pricing guides
 │   ├── screenshots/           # Landing and feature screenshots
+│   ├── architecture-diagram.svg # AWS architecture diagram
 │   ├── approach.md            # Product and architecture approach note
 │   ├── architecture.md        # Execution flows and data boundaries
 │   ├── assistant.md           # Assistant runtimes and AgentCore clarification
@@ -182,6 +198,22 @@ EventBridge Scheduler ──▶ Digest Lambda ──▶ Amazon SES
 
 Generated folders such as `dist/`, `build-temp/`, `.hosting/`, `cdk.out/`, `.bb-data/`, `.blocks-sandbox/`, and `node_modules/` are not source.
 
+## Developer Map
+
+Start with these files when changing the app:
+
+| Area | File or folder | Why it matters |
+|---|---|---|
+| Product shell and landing page | `index.html` | Public first screen, auth mount point, app root |
+| Browser app | `src/main.ts` | Notes UI, dashboard, assistant panel, translation, speech, reminders |
+| Styling | `src/styles/app.css` | Responsive layout, landing page, workbench visual system |
+| Note domain logic | `src/domain/notes.ts` | Filtering, summaries, due-date behavior |
+| Backend composition | `aws-blocks/index.ts` | API, auth, tables, agents, tools, jobs, digest, AI guardrails |
+| Infrastructure adjustments | `aws-blocks/index.cdk.ts` | AWS deployment, LocalStack compatibility, hosting/security settings |
+| User help docs | `knowledge/` | Documents indexed by local TF-IDF and Bedrock Knowledge Bases |
+| Tests | `test/` | Unit and typed end-to-end coverage |
+| Operations | `docs/wiki/` | AWS implementation, cleanup, pricing, evaluation checklist |
+
 ## How To Run Locally
 
 ```bash
@@ -194,6 +226,8 @@ npm run dev
 Open the local URL printed by the dev server.
 
 Local state is stored under `.bb-data/`. The default assistant is deterministic and offline, so the core tool and approval flow works without external model access.
+
+Fresh clone note: `aws-blocks/client.js` is generated code and is intentionally ignored by Git. `npm run dev`, `npm run build`, and `npm run generate-client` generate it for you.
 
 Optional Ollama runtime:
 
@@ -214,6 +248,18 @@ Implementation and operations are in the wiki-style docs:
 - [Evaluation checklist](docs/wiki/Evaluation-Checklist.md)
 
 The challenge article intentionally points readers back here instead of trying to carry every command in the article body.
+
+## Destroy And Cleanup
+
+When you are done testing in AWS, clean up resources from the repo root:
+
+```bash
+npm run destroy
+npm run sandbox:destroy
+./scripts/localstack.sh down
+```
+
+Some knowledge-base S3 or S3 Vectors resources may be retained by design. Read [Destroy and Cleanup](docs/wiki/Destroy-and-Cleanup.md) before assuming the account is fully clean.
 
 ## Documentation
 

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-labelledby="title desc">
+  <title id="title">Instanote AWS Architecture</title>
+  <desc id="desc">AWS architecture diagram showing browser, CloudFront, API Gateway, Lambda, DynamoDB, Bedrock, Polly, Knowledge Bases, SQS, WebSockets, EventBridge Scheduler, SES, WAF, S3, and SSM Parameter Store.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f9fc; }
+      .panel { fill: #ffffff; stroke: #dce3ee; stroke-width: 2; }
+      .edge { fill: #eaf0ff; stroke: #3268e8; stroke-width: 2; }
+      .compute { fill: #fff5e8; stroke: #e0781f; stroke-width: 2; }
+      .data { fill: #edf8f4; stroke: #23866b; stroke-width: 2; }
+      .ai { fill: #f0edff; stroke: #6c5ce7; stroke-width: 2; }
+      .security { fill: #fff0ef; stroke: #e75f4e; stroke-width: 2; }
+      .text { font: 700 20px Arial, sans-serif; fill: #17233d; }
+      .small { font: 500 15px Arial, sans-serif; fill: #526079; }
+      .tiny { font: 500 13px Arial, sans-serif; fill: #526079; }
+      .label { font: 700 14px Arial, sans-serif; fill: #3268e8; letter-spacing: 1px; }
+      .arrow { stroke: #526079; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .arrow-blue { stroke: #3268e8; stroke-width: 2.4; fill: none; marker-end: url(#arrowBlue); }
+      .dash { stroke-dasharray: 7 7; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#526079"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#3268e8"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1280" height="760" rx="28"/>
+  <text x="54" y="58" class="label">INSTANOTE AWS ARCHITECTURE</text>
+  <text x="54" y="92" class="text">Offline-first AI productivity app deployed as a serverless AWS workload</text>
+  <text x="54" y="122" class="small">AI plans the day, searches notes, translates content, reads notes aloud, and proposes writes behind human approval.</text>
+
+  <rect x="44" y="160" width="230" height="116" rx="20" class="panel"/>
+  <text x="72" y="208" class="text">Browser</text>
+  <text x="72" y="235" class="small">Landing page, notes UI,</text>
+  <text x="72" y="256" class="small">assistant, voice capture</text>
+
+  <rect x="344" y="150" width="250" height="136" rx="20" class="edge"/>
+  <text x="374" y="195" class="text">CloudFront + S3</text>
+  <text x="374" y="224" class="small">Static app hosting</text>
+  <text x="374" y="246" class="small">Security headers</text>
+
+  <rect x="374" y="310" width="190" height="88" rx="18" class="security"/>
+  <text x="414" y="350" class="text">AWS WAF</text>
+  <text x="414" y="374" class="small">Rate limiting</text>
+
+  <rect x="654" y="150" width="236" height="136" rx="20" class="edge"/>
+  <text x="684" y="194" class="text">API Gateway</text>
+  <text x="684" y="223" class="small">Typed HTTP API</text>
+  <text x="684" y="246" class="small">Session cookie auth</text>
+
+  <rect x="654" y="326" width="236" height="108" rx="20" class="edge"/>
+  <text x="684" y="370" class="text">WebSocket API</text>
+  <text x="684" y="398" class="small">Realtime notes and</text>
+  <text x="684" y="420" class="small">assistant events</text>
+
+  <rect x="964" y="150" width="240" height="136" rx="20" class="compute"/>
+  <text x="994" y="195" class="text">Lambda API</text>
+  <text x="994" y="224" class="small">Notes, settings, digest</text>
+  <text x="994" y="246" class="small">AI tool orchestration</text>
+
+  <rect x="962" y="326" width="244" height="108" rx="20" class="data"/>
+  <text x="994" y="370" class="text">DynamoDB</text>
+  <text x="994" y="398" class="small">Notes, profiles, convos,</text>
+  <text x="994" y="420" class="small">AI usage counters</text>
+
+  <rect x="54" y="496" width="210" height="104" rx="20" class="ai"/>
+  <text x="84" y="538" class="text">Amazon Bedrock</text>
+  <text x="84" y="566" class="small">Assistant and quick AI</text>
+  <text x="84" y="588" class="small">plan, translate, summarize</text>
+
+  <rect x="306" y="496" width="210" height="104" rx="20" class="ai"/>
+  <text x="336" y="538" class="text">Knowledge Bases</text>
+  <text x="336" y="566" class="small">Help retrieval over</text>
+  <text x="336" y="588" class="small">bundled docs + vectors</text>
+
+  <rect x="558" y="496" width="190" height="104" rx="20" class="ai"/>
+  <text x="588" y="538" class="text">Amazon Polly</text>
+  <text x="588" y="566" class="small">Neural MP3 speech</text>
+  <text x="588" y="588" class="small">for notes/translations</text>
+
+  <rect x="790" y="496" width="180" height="104" rx="20" class="compute"/>
+  <text x="830" y="538" class="text">Amazon SQS</text>
+  <text x="830" y="566" class="small">Async agent jobs</text>
+  <text x="830" y="588" class="small">decoupled execution</text>
+
+  <rect x="1012" y="496" width="192" height="104" rx="20" class="compute"/>
+  <text x="1042" y="538" class="text">Agent Worker</text>
+  <text x="1042" y="566" class="small">Lambda runs assistant</text>
+  <text x="1042" y="588" class="small">tools and approvals</text>
+
+  <rect x="54" y="642" width="270" height="70" rx="18" class="compute"/>
+  <text x="82" y="684" class="text">EventBridge Scheduler</text>
+
+  <rect x="374" y="642" width="170" height="70" rx="18" class="compute"/>
+  <text x="418" y="684" class="text">SES</text>
+
+  <rect x="594" y="642" width="230" height="70" rx="18" class="security"/>
+  <text x="626" y="684" class="text">SSM Parameter Store</text>
+
+  <path class="arrow-blue" d="M274 218 H344"/>
+  <path class="arrow-blue" d="M594 218 H654"/>
+  <path class="arrow-blue" d="M890 218 H964"/>
+  <path class="arrow" d="M1084 286 V326"/>
+  <path class="arrow" d="M964 380 H890"/>
+  <path class="arrow dash" d="M654 380 H274 V252"/>
+
+  <path class="arrow" d="M1014 286 C870 440 280 420 160 496"/>
+  <path class="arrow" d="M1026 286 C900 440 480 430 412 496"/>
+  <path class="arrow" d="M1040 286 C930 430 690 430 654 496"/>
+  <path class="arrow" d="M1084 286 C1060 420 900 430 880 496"/>
+  <path class="arrow" d="M970 548 H1012"/>
+  <path class="arrow" d="M1012 548 C740 460 330 450 160 496"/>
+
+  <path class="arrow" d="M189 642 V600"/>
+  <path class="arrow" d="M324 677 H374"/>
+  <path class="arrow" d="M544 677 H594"/>
+
+  <text x="70" y="738" class="tiny">Local development uses persistent mocks for tables, email, realtime, help search, and deterministic assistant behavior.</text>
+  <text x="770" y="738" class="tiny">AWS deployment uses the same typed app model through AWS Blocks and CDK.</text>
+</svg>
